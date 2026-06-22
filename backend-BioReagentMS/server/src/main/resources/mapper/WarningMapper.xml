@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.bioreagent.mapper.WarningMapper">
+
+    <!-- 插入预警记录 -->
+    <insert id="insert" parameterType="com.bioreagent.dto.WarningRecordDTO" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO warning_record (
+            reagent_id,
+            reagent_name,
+            reagent_batch,
+            warning_type,
+            trigger_time,
+            status
+        ) VALUES (
+            #{reagentId},
+            #{reagentName},
+            #{reagentBatch},
+            #{warningType},
+            NOW(),
+            #{status}
+        )
+    </insert>
+
+    <!-- 标记已处理：只改三个字段 -->
+    <update id="resolve">
+        UPDATE warning_record
+        SET status       = #{status},
+            resolve_time = #{resolveTime},
+            resolved_by  = #{resolvedBy}
+        WHERE id = #{id}
+    </update>
+
+    <!-- 分页条件查询（联表试剂表拉阈值，子查询算实时库存） -->
+    <select id="page" parameterType="com.bioreagent.QueryParam.WarningRecordQueryParam"
+            resultType="com.bioreagent.entity.WarningRecord">
+        SELECT
+            w.id,
+            w.reagent_id,
+            w.reagent_name,
+            w.reagent_batch,
+            w.warning_type,
+            w.trigger_time,
+            w.status,
+            w.resolve_time,
+            w.resolved_by,
+            r.safety_stock_threshold AS safetyStockThreshold,
+            (SELECT COALESCE(SUM(rb.current_quantity), 0)
+             FROM reagent_batch rb
+             WHERE rb.reagent_id = w.reagent_id
+               AND rb.status IN (0, 1)) AS currentStock
+        FROM warning_record w
+        LEFT JOIN reagent r ON w.reagent_id = r.id
+        <where>
+            <if test="status != null">
+                AND w.status = #{status}
+            </if>
+            <if test="warningType != null and warningType != ''">
+                AND w.warning_type = #{warningType}
+            </if>
+            <if test="reagentName != null and reagentName != ''">
+                AND w.reagent_name LIKE CONCAT('%', #{reagentName}, '%')
+            </if>
+        </where>
+        ORDER BY w.trigger_time DESC
+    </select>
+
+
+    <!-- 去重查询 -->
+    <select id="getByReagentAndType" resultType="com.bioreagent.entity.WarningRecord">
+        SELECT
+            id,
+            reagent_id,
+            reagent_name,
+            reagent_batch,
+            warning_type,
+            trigger_time,
+            status,
+            resolve_time,
+            resolved_by
+        FROM warning_record
+        WHERE reagent_id  = #{reagentId}
+          AND warning_type = #{warningType}
+          AND status       = #{status}
+        LIMIT 1
+    </select>
+
+</mapper>

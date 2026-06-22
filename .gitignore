@@ -1,0 +1,40 @@
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# Maven
+.m2/
+target/
+*.class
+*.jar
+*.war
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+
+# Environment - keep local secrets out of repo
+.env
+.env.local
+.env.*.local
+application-local.yml
+application-dev.yml
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# Build
+build/
+out/

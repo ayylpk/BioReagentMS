@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.bioreagent.mapper.ReportMapper">
+
+    <select id="top10LowStock" resultType="com.bioreagent.entity.Reagent">
+        SELECT
+            r.id,
+            r.name,
+            r.cas_number,
+            r.specification,
+            r.purity,
+            r.category_id,
+            r.unit,
+            r.storage_condition,
+            r.safety_stock_threshold,
+            r.warning_advance_days,
+            r.status,
+            r.create_time,
+            (SELECT COALESCE(SUM(current_quantity), 0)
+             FROM reagent_batch
+             WHERE reagent_id = r.id
+               AND status IN (0, 1)) AS total_stock
+        FROM reagent r
+        ORDER BY total_stock ASC
+        LIMIT 10
+    </select>
+
+    <select id="top10HighStock" resultType="com.bioreagent.entity.Reagent">
+        SELECT
+            r.id,
+            r.name,
+            r.cas_number,
+            r.specification,
+            r.purity,
+            r.category_id,
+            r.unit,
+            r.storage_condition,
+            r.safety_stock_threshold,
+            r.warning_advance_days,
+            r.status,
+            r.create_time,
+            (SELECT COALESCE(SUM(current_quantity), 0)
+             FROM reagent_batch
+             WHERE reagent_id = r.id
+               AND status IN (0, 1)) AS total_stock
+        FROM reagent r
+        ORDER BY total_stock DESC
+        LIMIT 10
+    </select>
+
+    <select id="top10Inbound" resultType="com.bioreagent.vo.InboundRankVO">
+        SELECT
+            reagent_id,
+            SUM(quantity) AS total_quantity
+        FROM warehouse_receipt
+        WHERE receipt_time BETWEEN #{startTime} AND #{endTime}
+        GROUP BY reagent_id
+        ORDER BY total_quantity DESC
+        LIMIT 10
+    </select>
+
+    <select id="top10Outbound" resultType="com.bioreagent.vo.OutboundRankVO">
+        SELECT
+            reagent_id,
+            SUM(quantity) AS total_quantity
+        FROM delivery_order
+        WHERE create_time BETWEEN #{startTime} AND #{endTime}
+          AND status = 1
+        GROUP BY reagent_id
+        ORDER BY total_quantity DESC
+        LIMIT 10
+    </select>
+
+</mapper>

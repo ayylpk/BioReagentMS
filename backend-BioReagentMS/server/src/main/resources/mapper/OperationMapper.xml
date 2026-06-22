@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.bioreagent.mapper.OperationMapper">
+
+    <resultMap id="OperationVOMap" type="com.bioreagent.vo.OperationVO">
+        <id column="id" property="id"/>
+        <result column="operator_id" property="operatorId"/>
+        <result column="operator_name" property="operatorName"/>
+        <result column="module" property="module"/>
+        <result column="action" property="action"/>
+        <result column="target_id" property="targetId"/>
+        <result column="detail" property="detail"/>
+        <result column="create_time" property="createTime"/>
+    </resultMap>
+
+    <!-- 分页 + 动态条件查询操作日志，JOIN user 表获取操作人姓名 -->
+    <select id="list" parameterType="com.bioreagent.QueryParam.OperationQueryParam" resultMap="OperationVOMap">
+        SELECT
+            ol.id,
+            ol.operator_id,
+            u.name AS operator_name,
+            ol.module,
+            ol.action,
+            ol.target_id,
+            ol.detail,
+            ol.create_time
+        FROM operation_log ol
+        LEFT JOIN user u ON ol.operator_id = u.id
+        <where>
+            <if test="module != null and module != ''">
+                AND ol.module = #{module}
+            </if>
+            <if test="action != null and action != ''">
+                AND ol.action = #{action}
+            </if>
+            <if test="operatorId != null">
+                AND ol.operator_id = #{operatorId}
+            </if>
+        </where>
+        ORDER BY ol.create_time DESC
+    </select>
+
+</mapper>

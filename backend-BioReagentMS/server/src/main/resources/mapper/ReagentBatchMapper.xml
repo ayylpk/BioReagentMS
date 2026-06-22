@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.bioreagent.mapper.ReagentBatchMapper">
+
+    <!-- 分页 + 动态条件查询批次 -->
+    <select id="list" parameterType="com.bioreagent.QueryParam.ReagentBatchQueryParam" resultType="com.bioreagent.entity.ReagentBatch">
+        SELECT
+            id,
+            reagent_id,
+            batch_number,
+            production_date,
+            expiry_date,
+            opened_expiry_days,
+            opened_date,
+            initial_quantity,
+            current_quantity,
+            unit_price,
+            storage_location,
+            supplier_id,
+            status,
+            remark,
+            create_time
+        FROM reagent_batch
+        <where>
+            <if test="reagentId != null">
+                AND reagent_id = #{reagentId}
+            </if>
+            <if test="batchNumber != null and batchNumber != ''">
+                AND batch_number LIKE CONCAT('%', #{batchNumber}, '%')
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (batch_number LIKE CONCAT('%', #{keyword}, '%')
+                     OR reagent_id IN (
+                         SELECT id FROM reagent WHERE name LIKE CONCAT('%', #{keyword}, '%')
+                     ))
+            </if>
+            <if test="status != null">
+                AND status = #{status}
+            </if>
+        </where>
+        ORDER BY id DESC
+    </select>
+
+    <!-- 新增批次 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO reagent_batch (
+            reagent_id,
+            batch_number,
+            production_date,
+            expiry_date,
+            opened_expiry_days,
+            opened_date,
+            initial_quantity,
+            current_quantity,
+            unit_price,
+            storage_location,
+            supplier_id,
+            status,
+            remark,
+            create_time
+        ) VALUES (
+            #{reagentId},
+            #{batchNumber},
+            #{productionDate},
+            #{expiryDate},
+            #{openedExpiryDays},
+            #{openedDate},
+            #{initialQuantity},
+            #{currentQuantity},
+            #{unitPrice},
+            #{storageLocation},
+            #{supplierId},
+            #{status},
+            #{remark},
+            #{createTime}
+        )
+    </insert>
+
+    <!-- 动态更新批次 -->
+    <update id="update">
+        UPDATE reagent_batch
+        <set>
+            <if test="batchNumber != null and batchNumber != ''">
+                batch_number = #{batchNumber},
+            </if>
+            <if test="productionDate != null">
+                production_date = #{productionDate},
+            </if>
+            <if test="expiryDate != null">
+                expiry_date = #{expiryDate},
+            </if>
+            <if test="openedExpiryDays != null">
+                opened_expiry_days = #{openedExpiryDays},
+            </if>
+            <if test="openedDate != null">
+                opened_date = #{openedDate},
+            </if>
+            <if test="initialQuantity != null">
+                initial_quantity = #{initialQuantity},
+            </if>
+            <if test="currentQuantity != null">
+                current_quantity = #{currentQuantity},
+            </if>
+            <if test="unitPrice != null">
+                unit_price = #{unitPrice},
+            </if>
+            <if test="storageLocation != null and storageLocation != ''">
+                storage_location = #{storageLocation},
+            </if>
+            <if test="supplierId != null and supplierId != ''">
+                supplier_id = #{supplierId},
+            </if>
+            <if test="status != null">
+                status = #{status},
+            </if>
+            <if test="remark != null and remark != ''">
+                remark = #{remark},
+            </if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 删除单个批次 -->
+    <delete id="delete">
+        DELETE FROM reagent_batch WHERE id = #{id}
+    </delete>
+
+    <!-- 按试剂ID列表批量删除批次（级联：删试剂时先清批次） -->
+    <delete id="deleteByReagentIds">
+        DELETE FROM reagent_batch WHERE reagent_id IN
+        <foreach collection="list" item="reagentId" open="(" separator="," close=")">
+            #{reagentId}
+        </foreach>
+    </delete>
+
+</mapper>

@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.bioreagent.mapper.ReagentMapper">
+
+    <delete id="remove">
+        DELETE FROM reagent WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
+    <select id="list" parameterType="com.bioreagent.QueryParam.ReagentQueryParam" resultType="com.bioreagent.entity.Reagent">
+        SELECT
+            r.id,
+            r.name,
+            r.cas_number,
+            r.specification,
+            r.purity,
+            r.category_id,
+            r.unit,
+            r.storage_condition,
+            r.safety_stock_threshold,
+            r.warning_advance_days,
+            r.status,
+            r.create_time,
+            (SELECT COALESCE(SUM(current_quantity), 0)
+             FROM reagent_batch
+             WHERE reagent_id = r.id
+               AND status IN (0, 1)) AS total_stock
+        FROM reagent r
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (r.name LIKE CONCAT('%', #{keyword}, '%')
+                     OR r.cas_number LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="categoryId != null">
+                AND r.category_id = #{categoryId}
+            </if>
+            <if test="status != null">
+                AND r.status = #{status}
+            </if>
+
+            <if test="supplierId != null and supplierId != ''">
+                AND r.id IN (
+                    SELECT DISTINCT reagent_id FROM reagent_batch WHERE supplier_id = #{supplierId}
+                )
+            </if>
+        </where>
+        ORDER BY r.id DESC
+    </select>
+
+    <select id="getById" resultType="com.bioreagent.entity.Reagent">
+        SELECT
+            id,
+            name,
+            cas_number,
+            specification,
+            purity,
+            category_id,
+            unit,
+            storage_condition,
+            safety_stock_threshold,
+            warning_advance_days,
+            status,
+            create_time,
+            (SELECT COALESCE(SUM(current_quantity), 0)
+             FROM reagent_batch
+             WHERE reagent_id = reagent.id
+               AND status IN (0, 1)) AS total_stock
+        FROM reagent
+        WHERE id = #{id}
+    </select>
+
+    <update id="update" parameterType="com.bioreagent.dto.ReagentDTO">
+        UPDATE reagent
+        <set>
+            <if test="name != null and name != ''">
+                name = #{name},
+            </if>
+            <if test="casNumber != null and casNumber != ''">
+                cas_number = #{casNumber},
+            </if>
+            <if test="specification != null and specification != ''">
+                specification = #{specification},
+            </if>
+            <if test="purity != null and purity != ''">
+                purity = #{purity},
+            </if>
+            <if test="categoryId != null">
+                category_id = #{categoryId},
+            </if>
+            <if test="unit != null and unit != ''">
+                unit = #{unit},
+            </if>
+            <if test="storageCondition != null and storageCondition != ''">
+                storage_condition = #{storageCondition},
+            </if>
+            <if test="safetyStockThreshold != null">
+                safety_stock_threshold = #{safetyStockThreshold},
+            </if>
+            <if test="warningAdvanceDays != null">
+                warning_advance_days = #{warningAdvanceDays},
+            </if>
+            <if test="status != null">
+                status = #{status},
+            </if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 新增试剂（仅主表） -->
+    <insert id="insert" parameterType="com.bioreagent.entity.Reagent" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO reagent (
+            name,
+            cas_number,
+            specification,
+            purity,
+            category_id,
+            unit,
+            storage_condition,
+            safety_stock_threshold,
+            warning_advance_days,
+            status,
+            create_time
+        ) VALUES (
+            #{name},
+            #{casNumber},
+            #{specification},
+            #{purity},
+            #{categoryId},
+            #{unit},
+            #{storageCondition},
+            #{safetyStockThreshold},
+            #{warningAdvanceDays},
+            #{status},
+            #{createTime}
+        )
+    </insert>
+
+</mapper>
