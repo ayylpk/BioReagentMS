@@ -24,6 +24,12 @@ dist-ssr/
 application-local.yml
 application-dev.yml
 
+# Python
+.venv/
+__pycache__/
+*.pyc
+.langgraph_api/
+
 # OS
 .DS_Store
 Thumbs.db

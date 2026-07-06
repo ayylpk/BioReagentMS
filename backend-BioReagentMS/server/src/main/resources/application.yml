@@ -2,8 +2,6 @@ server:
   port: 8080
 
 spring:
-  profiles:
-    active: dev
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:BioReagentMS}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
@@ -29,6 +27,8 @@ logging:
         mapper: debug
         service: info
         controller: info
+    org.springframework.data.redis: DEBUG
+    io.lettuce.core: DEBUG
 
 bioreagent:
   jwt:
@@ -36,8 +36,3 @@ bioreagent:
     ttl: 7200000
     token-name: token
 
-alioss:
-  endpoint: ${OSS_ENDPOINT:}
-  access-key-id: ${OSS_ACCESS_KEY_ID:}
-  access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
-  bucket-name: ${OSS_BUCKET_NAME:}

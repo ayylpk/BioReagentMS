@@ -47,6 +47,8 @@ public class JwtInterceptor implements HandlerInterceptor {
         } catch (Exception ex) {
             log.warn("JWT校验失败: {}", ex.getMessage());
             response.setStatus(401);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":0,\"msg\":\"未登录或token已过期\"}");
             return false;
         }
     }

@@ -1,0 +1,7 @@
+{
+    "dependencies": ["."],
+    "graphs": {
+        "reagent_assistant": "./main.py:graph"
+    },
+    "env": ".env"
+}

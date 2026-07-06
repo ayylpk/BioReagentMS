@@ -147,10 +147,6 @@ async function handleDelete(row) {
 // ---------- 分类列表（下拉用） ----------
 async function loadCategories() {
   try {
-    // 后端可能没有专门分类接口，用试剂列表提取
-    const res = await request.get('/reagents/', { params: { page: 1, pageSize: 1 } })
-    // 如果有分类接口则用分类接口；这里用后端现有字段 categoryId 筛选
-    // 预置常用分类供选择
     categories.value = [
       { id: 1, name: '无机试剂' },
       { id: 2, name: '有机试剂' },
@@ -159,7 +155,7 @@ async function loadCategories() {
       { id: 5, name: '标准品' },
     ]
   } catch {
-    // silent
+
   }
 }
 

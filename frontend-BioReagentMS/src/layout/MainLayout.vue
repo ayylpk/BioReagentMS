@@ -10,7 +10,6 @@ const auth = useAuthStore()
 
 const isCollapse = ref(false)
 
-// 菜单项（根据角色过滤）
 const allMenuItems = [
   { path: '/dashboard', title: '工作台', icon: 'Monitor', roles: null },
   { path: '/reagents', title: '试剂管理', icon: 'Ticket', roles: null },
@@ -23,6 +22,7 @@ const allMenuItems = [
   { path: '/reports', title: '统计报表', icon: 'DataAnalysis', roles: null },
   { path: '/operations', title: '操作日志', icon: 'Document', roles: [0] },
   { path: '/users', title: '用户管理', icon: 'User', roles: [0] },
+  { path: '/chat', title: '智能助手', icon: 'ChatDotRound', roles: null },
 ]
 
 const menuItems = computed(() =>
@@ -110,7 +110,6 @@ function goHome() {
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="profile">个人信息</el-dropdown-item>
-                <el-dropdown-item command="password">修改密码</el-dropdown-item>
                 <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>

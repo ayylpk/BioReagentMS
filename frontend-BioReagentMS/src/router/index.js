@@ -86,6 +86,12 @@ const router = createRouter({
           component: () => import('@/views/Reports.vue'),
           meta: { title: '统计报表', icon: 'DataAnalysis' },
         },
+        {
+          path: 'chat',
+          name: 'Chat',
+          component: () => import('@/views/Chat.vue'),
+          meta: { title: '智能助手', icon: 'ChatDotRound' },
+        },
       ],
     },
     {

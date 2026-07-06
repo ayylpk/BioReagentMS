@@ -15,6 +15,7 @@
 | 用户管理 | 多角色权限控制（系统管理员/仓库管理员/实验员/采购员/PI） |
 | 操作日志 | 自动记录增删改操作，可追溯 |
 | 报表导出 | 库存报表、入库报表 Excel 导出 |
+| 智能助手 | AI 对话式查询，支持自然语言问试剂、库存、预警、批次等信息 |
 
 ## 技术栈
 
@@ -26,11 +27,12 @@
 | 数据库 | MySQL 8.0 + Druid 连接池 |
 | 缓存 | Redis（Spring Cache 注解） |
 | 定时任务 | Spring Scheduled（预警扫描） |
-| 文件存储 | 阿里云 OSS |
 | 前端框架 | Vue 3 + Vite |
 | UI 组件 | Element Plus |
 | 状态管理 | Pinia |
 | HTTP 客户端 | Axios |
+| AI Agent | LangGraph + LangChain + DeepSeek |
+| Agent 工具 | Tavily Search（联网检索） |
 
 ## 项目结构
 
@@ -46,76 +48,25 @@ BioReagentMS/
 │       ├── router/                # 路由配置
 │       ├── stores/                # Pinia 状态管理
 │       ├── utils/                 # Axios 封装
-│       └── views/                 # 页面组件
+│       └── views/                 # 页面组件（含 Chat.vue 智能助手）
+├── agent-BioReagentMS/            # AI Agent（LangGraph）
+│   ├── app/agent/                 # Agent 定义与 API 客户端
+│   ├── app/common/tools/          # 业务工具函数（试剂/库存/预警等）
+│   ├── main.py                    # Agent 入口
+│   └── langgraph.json             # LangGraph 配置
 ├── env.example                    # 环境变量模板（复制为 .env 使用）
 └── .gitignore
 ```
 
-## 快速开始
+## 服务端口
 
-### 1. 数据库
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| 后端 API | 8080 | Spring Boot |
+| 前端 | 5173 | Vite 开发服务器 |
+| AI Agent | 2024 | LangGraph 服务 |
 
-执行 SQL 脚本初始化数据库：
-
-```bash
-mysql -u root -p < backend-BioReagentMS/server/src/main/resources/template/All.sql
-```
-
-### 2. 后端启动
-
-```bash
-cd backend-BioReagentMS
-
-# 配置环境变量（参考 env.example）
-# 或直接修改 application.yml 填入真实值
-
-mvn clean install -DskipTests
-cd server
-mvn spring-boot:run
-```
-
-服务默认运行在 `http://localhost:8080`。
-
-### 3. 前端启动
-
-```bash
-cd frontend-BioReagentMS
-npm install
-npm run dev
-```
-
-前端开发服务器默认运行在 `http://localhost:5173`，已配置代理转发 `/api` 到后端。
-
-### 4. 默认账号
-
-| 用户名 | 密码 | 角色 |
-|--------|------|------|
-| admin | 123456 | 系统管理员 |
-| warehouse | 123456 | 仓库管理员 |
-| labuser | 123456 | 普通实验人员 |
-| purchaser | 123456 | 采购人员 |
-| pi | 123456 | 课题负责人 |
-
-## 环境变量
-
-复制 `env.example` 为 `.env`，按实际环境填写：
-
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| DB_HOST | 数据库地址 | localhost |
-| DB_PORT | 数据库端口 | 3306 |
-| DB_NAME | 数据库名 | BioReagentMS |
-| DB_USERNAME | 数据库用户 | root |
-| DB_PASSWORD | 数据库密码 | - |
-| REDIS_HOST | Redis 地址 | localhost |
-| REDIS_PORT | Redis 端口 | 6379 |
-| REDIS_PASSWORD | Redis 密码 | - |
-| REDIS_DATABASE | Redis 库号 | 0 |
-| JWT_SECRET_KEY | JWT 签名密钥（Base64，≥256bits） | - |
-| OSS_ENDPOINT | 阿里云 OSS Endpoint | - |
-| OSS_ACCESS_KEY_ID | 阿里云 AccessKey ID | - |
-| OSS_ACCESS_KEY_SECRET | 阿里云 AccessKey Secret | - |
-| OSS_BUCKET_NAME | OSS Bucket 名称 | - |
+前端代理：`/api` → `localhost:8080`，`/agent` → `localhost:2024`
 
 ## License
 

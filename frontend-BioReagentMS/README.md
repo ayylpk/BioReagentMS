@@ -1,44 +1,61 @@
-# BioReagentMS
+# BioReagentMS 前端
 
-This template should help get you started developing with Vue 3 in Vite.
+基于 Vue 3 + Vite + Element Plus 的生物试剂库存管理系统前端。
 
-## Recommended IDE Setup
+## 技术栈
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+| 组件 | 技术 |
+|------|------|
+| 框架 | Vue 3 (Composition API) |
+| 构建 | Vite |
+| UI 组件 | Element Plus |
+| 状态管理 | Pinia |
+| HTTP | Axios |
+| 图表 | ECharts + vue-echarts |
+| Markdown 渲染 | marked |
 
-## Recommended Browser Setup
+## 项目结构
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
-
-```sh
-npm install
+```
+frontend-BioReagentMS/
+├── src/
+│   ├── layout/
+│   │   └── MainLayout.vue        # 主布局（侧边栏+顶栏+内容区）
+│   ├── router/
+│   │   └── index.js              # 路由配置
+│   ├── stores/
+│   │   └── auth.js               # 用户认证状态
+│   ├── utils/
+│   │   └── request.js            # Axios 封装（拦截器/错误处理）
+│   └── views/
+│       ├── Dashboard.vue         # 工作台
+│       ├── Reagents.vue          # 试剂管理
+│       ├── Inventory.vue         # 库存管理
+│       ├── Inbounds.vue          # 入库管理
+│       ├── Outbounds.vue         # 出库管理
+│       ├── Warnings.vue          # 效期预警
+│       ├── Suppliers.vue         # 供应商管理
+│       ├── Reports.vue           # 统计报表
+│       ├── Operations.vue        # 操作日志
+│       ├── Users.vue             # 用户管理
+│       ├── Profile.vue           # 个人信息
+│       └── Chat.vue              # 智能助手（AI 对话）
+├── package.json
+├── vite.config.js                # Vite 配置（含代理转发）
+└── index.html
 ```
 
-### Compile and Hot-Reload for Development
+## 端口
 
-```sh
-npm run dev
-```
+| 模式 | 端口 |
+|------|------|
+| npm run dev | 5173 |
 
-### Compile and Minify for Production
+## 代理
 
-```sh
-npm run build
-```
+`vite.config.js` 中已配置代理：
 
-### Lint with [ESLint](https://eslint.org/)
-
-```sh
-npm run lint
-```
+| 前缀 | 转发到 | 说明 |
+|------|--------|------|
+| `/api` | `http://localhost:8080` | 后端 API |
+| `/agent` | `http://localhost:2024` | AI Agent 服务 |
