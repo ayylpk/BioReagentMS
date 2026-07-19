@@ -43,7 +43,7 @@ logs/
 
 # LangGraph
 checkpoints.db
-resources/chroma/
+**/resources/chroma/
 
 # Build
 build/
