@@ -2,7 +2,7 @@ package com.bioreagent.controller;
 
 import com.bioreagent.QueryParam.DeliveryOrderQueryParam;
 import com.bioreagent.annotation.OperationAudit;
-import com.bioreagent.annotation.RequireRole;
+import com.bioreagent.annotation.RequirePermission;
 import com.bioreagent.result.PageResult;
 import com.bioreagent.result.Result;
 import com.bioreagent.service.OutboundOrderAuditService;
@@ -22,7 +22,7 @@ public class OutboundOrderAuditController {
     @Autowired
     private OutboundOrderAuditService outboundOrderAuditService;
 
-    @RequireRole({0, 1})
+    @RequirePermission("delivery:query")
     @GetMapping
     public Result<PageResult<DeliveryOrderVO>> queryDeliveryOrder(DeliveryOrderQueryParam queryParam) {
         log.info("分页查询未审核的出库单：{}", queryParam);
@@ -31,16 +31,16 @@ public class OutboundOrderAuditController {
     }
 
     @OperationAudit(module = "出库")
-    @RequireRole({0, 1})
+    @RequirePermission("delivery:audit")
     @PutMapping("/agree")
-    public Result agree(Integer id, Integer reagentId, Integer quantity) {
-        log.info("同意出库单：id={}, reagentId={}, quantity={}", id, reagentId, quantity);
+    public Result agree(Integer id, Integer reagentId, String reagentName, Integer quantity) {
+        log.info("同意出库单：id={}, reagentId={}, reagentName={}, quantity={}", id, reagentId, reagentName, quantity);
         outboundOrderAuditService.agree(id, reagentId, quantity);
         return Result.success();
     }
 
     @OperationAudit(module = "出库")
-    @RequireRole({0, 1})
+    @RequirePermission("delivery:audit")
     @PutMapping("/reject")
     public Result reject(Integer id, String rejectionReason) {
         log.info("拒绝出库单：{}", id);

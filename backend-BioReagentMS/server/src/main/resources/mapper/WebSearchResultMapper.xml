@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.bioreagent.mapper.WebSearchResultMapper">
+
+    <!-- 分页 + 动态条件查询 -->
+    <select id="list" parameterType="com.bioreagent.QueryParam.WebSearchResultsQueryParam"
+            resultType="com.bioreagent.entity.WebSearchResult">
+        SELECT
+            id,
+            reagent_name,
+            cas_number,
+            content,
+            create_time
+        FROM web_search_result
+        <where>
+            <if test="reagentName != null and reagentName != ''">
+                AND reagent_name LIKE CONCAT('%', #{reagentName}, '%')
+            </if>
+            <if test="status != null">
+                AND status = #{status}
+            </if>
+        </where>
+        ORDER BY create_time DESC
+    </select>
+
+    <!-- 按试剂名称查单条 -->
+    <select id="getByReagentName" resultType="com.bioreagent.entity.WebSearchResult">
+        SELECT id, reagent_name, cas_number, content, create_time
+        FROM web_search_result
+        WHERE reagent_name = #{reagentName}
+        LIMIT 1
+    </select>
+
+    <!-- 插入 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO web_search_result (reagent_name, cas_number, content, create_time)
+        VALUES (#{reagentName}, #{casNumber}, #{content}, NOW())
+    </insert>
+
+    <!-- 按 ID 删除 -->
+    <delete id="deleteById">
+        DELETE FROM web_search_result WHERE id = #{id}
+    </delete>
+
+</mapper>

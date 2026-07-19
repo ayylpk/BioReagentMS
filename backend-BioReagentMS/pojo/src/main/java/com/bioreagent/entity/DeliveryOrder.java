@@ -44,4 +44,6 @@ public class DeliveryOrder implements Serializable {
 
     private String remark; // 备注
 
+    private LocalDateTime createTime; // 创建时间
+
 }

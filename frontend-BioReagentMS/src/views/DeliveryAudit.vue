@@ -43,7 +43,7 @@ async function handleApprove(row) {
       { confirmButtonText: '确定通过', cancelButtonText: '取消', type: 'warning' },
     )
     await request.put('/outboundOrderAudit/agree', null, {
-      params: { id: row.id, reagentId: row.reagentId, quantity: row.quantity },
+      params: { id: row.id, reagentId: row.reagentId, reagentName: row.reagentName, quantity: row.quantity },
     })
     ElMessage.success('已通过')
     loadList()
@@ -100,7 +100,6 @@ onMounted(() => loadList())
       <el-table :data="list" v-loading="loading" stripe border>
         <el-table-column prop="orderNumber" label="出库单号" width="160" />
         <el-table-column prop="reagentName" label="试剂名称" minWidth="140" />
-        <el-table-column prop="batchNumber" label="出库批次" width="140" />
         <el-table-column prop="quantity" label="出库数量" width="90" />
         <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">

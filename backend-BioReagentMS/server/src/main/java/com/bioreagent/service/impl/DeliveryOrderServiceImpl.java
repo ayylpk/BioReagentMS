@@ -4,9 +4,14 @@ import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
 import com.bioreagent.QueryParam.DeliveryOrderQueryParam;
 import com.bioreagent.constant.DeliveryOrderStatus;
+import com.bioreagent.constant.MessageConstant;
+import com.bioreagent.context.BaseContext;
 import com.bioreagent.dto.DeliveryOrderDTO;
 import com.bioreagent.entity.DeliveryOrder;
+import com.bioreagent.entity.ReagentBatch;
 import com.bioreagent.mapper.DeliveryOrderMapper;
+import com.bioreagent.mapper.ReagentBatchMapper;
+import com.bioreagent.mapper.UserMapper;
 import com.bioreagent.result.PageResult;
 import com.bioreagent.service.DeliveryOrderService;
 import com.bioreagent.vo.DeliveryOrderVO;
@@ -27,6 +32,12 @@ public class DeliveryOrderServiceImpl implements DeliveryOrderService {
 
     @Autowired
     private DeliveryOrderMapper deliveryOrderMapper;
+
+    @Autowired
+    private UserMapper userMapper;
+
+    @Autowired
+    private ReagentBatchMapper reagentBatchMapper;
 
     @Override
     public PageResult<DeliveryOrderVO> page(DeliveryOrderQueryParam queryParam) {
@@ -59,7 +70,14 @@ public class DeliveryOrderServiceImpl implements DeliveryOrderService {
         if (deliveryOrder.getDeliveryTime() == null) {
             deliveryOrder.setDeliveryTime(LocalDateTime.now());
         }
-        
+
+        // 设操作人
+        Long currentId = BaseContext.getCurrentId();
+        if (currentId != null) {
+            deliveryOrder.setOperatorId(currentId.intValue());
+            deliveryOrder.setOperatorName(userMapper.getById(currentId.intValue()).getName());
+        }
+
         deliveryOrderMapper.insert(deliveryOrder);
     }
 
@@ -69,7 +87,7 @@ public class DeliveryOrderServiceImpl implements DeliveryOrderService {
         if (deliveryOrderDTO.getId() != null) {
             DeliveryOrder existing = deliveryOrderMapper.getById(deliveryOrderDTO.getId());
             if (existing != null && DeliveryOrderStatus.APPROVED.equals(existing.getStatus())) {
-                throw new RuntimeException("该出库单已通过审批，不允许修改");
+                throw new RuntimeException(MessageConstant.OUTBOUND_APPROVED_NO_MODIFY);
             }
         }
         DeliveryOrder deliveryOrder = new DeliveryOrder();
@@ -83,7 +101,7 @@ public class DeliveryOrderServiceImpl implements DeliveryOrderService {
         // 已通过的单据不允许删除
         DeliveryOrder existing = deliveryOrderMapper.getById(id);
         if (existing != null && DeliveryOrderStatus.APPROVED.equals(existing.getStatus())) {
-            throw new RuntimeException("该出库单已通过审批，不允许删除");
+            throw new RuntimeException(MessageConstant.OUTBOUND_APPROVED_NO_DELETE);
         }
         deliveryOrderMapper.deleteById(id);
     }
@@ -91,6 +109,13 @@ public class DeliveryOrderServiceImpl implements DeliveryOrderService {
     private DeliveryOrderVO toVO(DeliveryOrder deliveryOrder) {
         DeliveryOrderVO vo = new DeliveryOrderVO();
         BeanUtils.copyProperties(deliveryOrder, vo);
+        // 填充批号
+        if (deliveryOrder.getBatchId() != null) {
+            ReagentBatch batch = reagentBatchMapper.getById(deliveryOrder.getBatchId());
+            if (batch != null) {
+                vo.setBatchNumber(batch.getBatchNumber());
+            }
+        }
         return vo;
     }
 }

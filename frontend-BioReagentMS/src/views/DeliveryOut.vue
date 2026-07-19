@@ -202,8 +202,8 @@ onMounted(() => {
     <el-card>
       <el-table :data="list" v-loading="loading" stripe border>
         <el-table-column prop="orderNumber" label="出库单号" width="160" />
-        <el-table-column prop="reagentName" label="试剂名称" minWidth="140" />
-        <el-table-column prop="batchNumber" label="出库批次" width="140" />
+        <el-table-column prop="reagentName" label="试剂名称" minWidth="100" />
+        <el-table-column prop="batchNumber" label="出库批次" minWidth="140" />
         <el-table-column prop="quantity" label="数量" width="80" />
         <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">
@@ -251,19 +251,6 @@ onMounted(() => {
             @change="onReagentSelect"
           >
             <el-option v-for="r in reagentOptions" :key="r.value" :label="r.label" :value="r.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="出库批次" prop="batchId">
-          <el-select
-            v-model="form.batchId"
-            filterable
-            :loading="batchLoading"
-            :disabled="!form.reagentId"
-            placeholder="先选试剂再选批次"
-            style="width:100%"
-            @change="onBatchSelect"
-          >
-            <el-option v-for="b in batchOptions" :key="b.value" :label="b.label" :value="b.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="出库数量" prop="quantity">

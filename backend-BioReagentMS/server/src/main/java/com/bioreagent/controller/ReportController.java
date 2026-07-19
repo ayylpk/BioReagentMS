@@ -1,6 +1,7 @@
 package com.bioreagent.controller;
 
 
+import com.bioreagent.annotation.RequirePermission;
 import com.bioreagent.result.Result;
 import com.bioreagent.service.ReportService;
 import com.bioreagent.service.WorkSpaceService;
@@ -36,6 +37,7 @@ public class ReportController {
     @Autowired
     private WorkSpaceService workSpaceService;
 
+    @RequirePermission("report:query")
     @GetMapping("top10/low")
     public Result<TurnOverReportVO> top10LowStock() {
         log.info("查询库存最少的 10 种试剂");
@@ -43,12 +45,14 @@ public class ReportController {
         return Result.success(turnOverReportVO);
     }
 
+    @RequirePermission("report:query")
     @GetMapping("top10/high")
     public Result<TurnOverReportVO> top10HighStock() {
         log.info("查询库存最多的 10 种试剂");
         TurnOverReportVO turnOverReportVO= reportService.top10HighStock();
         return Result.success(turnOverReportVO);
     }
+    @RequirePermission("report:query")
     @GetMapping("top10/inbound")
     public Result<TurnOverReportVO> top10Inbound(
             @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
@@ -58,6 +62,7 @@ public class ReportController {
         return Result.success(turnOverReportVO);
     }
 
+    @RequirePermission("report:query")
     @GetMapping("top10/outbound")
     public Result<TurnOverReportVO> top10Outbound(
             @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
@@ -67,6 +72,7 @@ public class ReportController {
         return Result.success(turnOverReportVO);
     }
 
+    @RequirePermission("report:export")
     @GetMapping("export/inventory")
     public void exportInventory(HttpServletResponse response) throws IOException {
         // 1. 拿数据
@@ -76,7 +82,6 @@ public class ReportController {
         XSSFWorkbook wb = new XSSFWorkbook();
         Sheet sheet = wb.createSheet("库存报表");
 
-        // ===== 样式 =====
         CellStyle titleStyle = wb.createCellStyle();
         Font titleFont = wb.createFont();
         titleFont.setBold(true); titleFont.setFontHeightInPoints((short) 14);
@@ -173,6 +178,7 @@ public class ReportController {
         log.info("库存报表导出完成，试剂种类：{}", data.getReagentTypeCount());
     }
 
+    @RequirePermission("report:export")
     @GetMapping("export/inbound")
     public void exportInbound(HttpServletResponse response) throws IOException {
         InboundReportVO data = workSpaceService.exportInbound();

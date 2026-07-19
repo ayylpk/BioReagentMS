@@ -11,19 +11,20 @@ const auth = useAuthStore()
 const isCollapse = ref(false)
 
 const allMenuItems = [
-  { path: '/dashboard', title: '工作台', icon: 'Monitor', roles: null },
-  { path: '/reagents', title: '试剂管理', icon: 'Ticket', roles: null },
-  { path: '/batches', title: '批次管理', icon: 'Collection', roles: null },
-  { path: '/warehouse-in', title: '入库管理', icon: 'Box', roles: [0, 1] },
-  { path: '/delivery-out', title: '出库申请', icon: 'Sell', roles: null },
+  { path: '/dashboard', title: '工作台', icon: 'Monitor', roles: [0, 1, 4] },
+  { path: '/reagents', title: '试剂管理', icon: 'Ticket', roles: [0, 1, 2, 3, 4] },
+  { path: '/batches', title: '批次管理', icon: 'Collection', roles: [0, 1, 2, 3, 4] },
+  { path: '/warehouse-in', title: '入库管理', icon: 'Box', roles: [0, 1, 3] },
+  { path: '/delivery-out', title: '出库申请', icon: 'Sell', roles: [0, 1, 2] },
   { path: '/delivery-audit', title: '出库审核', icon: 'Checked', roles: [0, 1] },
-  { path: '/suppliers', title: '供应商管理', icon: 'OfficeBuilding', roles: null },
-  { path: '/warnings', title: '预警管理', icon: 'Warning', roles: null },
-  { path: '/reports', title: '统计报表', icon: 'DataAnalysis', roles: null },
+  { path: '/suppliers', title: '供应商管理', icon: 'OfficeBuilding', roles: [0, 3] },
+  { path: '/warnings', title: '预警管理', icon: 'Warning', roles: [0, 1] },
+  { path: '/reports', title: '统计报表', icon: 'DataAnalysis', roles: [0, 1, 4] },
   { path: '/operations', title: '操作日志', icon: 'Document', roles: [0] },
   { path: '/users', title: '用户管理', icon: 'User', roles: [0] },
-  { path: '/chat', title: '智能助手', icon: 'ChatDotRound', roles: null },
-]
+  { path: '/chat', title: '智能助手', icon: 'ChatDotRound', roles: [0, 1, 2, 3, 4] },
+  { path: '/web-search', title: '联网检索', icon: 'Search', roles: [0] },
+];
 
 const menuItems = computed(() =>
   allMenuItems.filter((item) => {

@@ -17,8 +17,6 @@ public class WarningScheduler {
 
     @Autowired
     private WarningService warningService;
-
-    /** 每天早上 0:00 执行 */
     @Scheduled(cron = "0 0 0 * * ?")
     public void scan() {
         log.info("定时扫描预警开始");

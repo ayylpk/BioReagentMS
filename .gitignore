@@ -41,6 +41,10 @@ Thumbs.db
 logs/
 *.log
 
+# LangGraph
+checkpoints.db
+resources/chroma/
+
 # Build
 build/
 out/

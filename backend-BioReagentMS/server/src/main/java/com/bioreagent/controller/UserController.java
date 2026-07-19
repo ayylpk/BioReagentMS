@@ -1,7 +1,7 @@
 package com.bioreagent.controller;
 
 import com.bioreagent.QueryParam.UserQueryParam;
-import com.bioreagent.annotation.RequireRole;
+import com.bioreagent.annotation.RequirePermission;
 import com.bioreagent.dto.UserDTO;
 import com.bioreagent.result.PageResult;
 import com.bioreagent.result.Result;
@@ -19,7 +19,7 @@ public class UserController {
     @Autowired
     private UserService userService;
 
-    @RequireRole({0})
+    @RequirePermission("user:query")
     @GetMapping
     public Result<PageResult<UserVO>> Page(UserQueryParam userQueryParam){
         PageResult<UserVO> pageResult = userService.page(userQueryParam);
@@ -28,7 +28,7 @@ public class UserController {
         return Result.success(pageResult);
     }
 
-    @RequireRole({0})
+    @RequirePermission("user:query")
     @GetMapping("{id}")
     public Result<UserVO> getById(@PathVariable Integer id){
         log.info("查询用户信息：{}", id);
@@ -36,7 +36,7 @@ public class UserController {
         return Result.success(user);
     }
 
-    @RequireRole({0})
+    @RequirePermission("user:manage")
     @PutMapping
     public Result update(@RequestBody UserDTO userDTO){
         log.info("更新用户信息：{}", userDTO);
@@ -44,7 +44,7 @@ public class UserController {
         return Result.success();
     }
 
-    @RequireRole({0})
+    @RequirePermission("user:manage")
     @DeleteMapping
     public Result delete(@RequestParam Integer id){
         log.info("删除用户信息：{}", id);
@@ -52,7 +52,7 @@ public class UserController {
         return Result.success();
     }
 
-    @RequireRole({0})
+    @RequirePermission("user:manage")
     @PostMapping
     public Result add(@RequestBody UserDTO userDTO){
         log.info("添加用户信息：{}", userDTO);

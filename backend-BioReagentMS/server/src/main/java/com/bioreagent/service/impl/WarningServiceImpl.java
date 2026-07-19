@@ -5,6 +5,7 @@ import com.github.pagehelper.PageHelper;
 import com.bioreagent.QueryParam.ReagentBatchQueryParam;
 import com.bioreagent.QueryParam.ReagentQueryParam;
 import com.bioreagent.QueryParam.WarningRecordQueryParam;
+import com.bioreagent.constant.MessageConstant;
 import com.bioreagent.constant.WarningConstant;
 import com.bioreagent.dto.WarningRecordDTO;
 import com.bioreagent.entity.Reagent;
@@ -71,10 +72,10 @@ public class WarningServiceImpl implements WarningService {
     public void resolve(Integer warningId, Integer resolvedBy) {
         WarningRecord warning = warningMapper.getById(warningId);
         if (warning == null) {
-            throw new RuntimeException("预警记录不存在");
+            throw new RuntimeException(MessageConstant.WARNING_NOT_FOUND);
         }
         if (WarningConstant.STATUS_RESOLVED.equals(warning.getStatus())) {
-            throw new RuntimeException("该预警已经是已处理状态");
+            throw new RuntimeException(MessageConstant.WARNING_ALREADY_RESOLVED);
         }
 
         // 二次核验

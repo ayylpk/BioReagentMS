@@ -1,7 +1,7 @@
 package com.bioreagent.controller;
 
 import com.bioreagent.QueryParam.SupplierQueryParm;
-import com.bioreagent.annotation.RequireRole;
+import com.bioreagent.annotation.RequirePermission;
 import com.bioreagent.dto.SupplierDTO;
 import com.bioreagent.result.PageResult;
 import com.bioreagent.result.Result;
@@ -26,6 +26,7 @@ public class SupplierController {
     @Autowired
     private SupplierService supplierService;
 
+    @RequirePermission("supplier:query")
     @GetMapping
     public Result<PageResult<SupplierVO>> page(SupplierQueryParm supplierQueryParm) {
         log.info("分页查询供应商信息：{}", supplierQueryParm);
@@ -33,6 +34,7 @@ public class SupplierController {
         return Result.success(pageResult);
     }
 
+    @RequirePermission("supplier:query")
     @GetMapping("/{id}")
     public Result<SupplierVO> getById(@PathVariable Integer id) {
         log.info("查询供应商详情：id={}", id);
@@ -40,7 +42,7 @@ public class SupplierController {
         return Result.success(supplierVO);
     }
 
-    @RequireRole({0, 3})
+    @RequirePermission("supplier:add")
     @PostMapping("/add")
     public Result save(@RequestBody SupplierDTO supplierDTO) {
         log.info("新增供应商：{}", supplierDTO);
@@ -48,7 +50,7 @@ public class SupplierController {
         return Result.success();
     }
 
-    @RequireRole({0, 3})
+    @RequirePermission("supplier:update")
     @PutMapping
     public Result update(@RequestBody SupplierDTO supplierDTO) {
         log.info("更新供应商：{}", supplierDTO);
@@ -56,7 +58,7 @@ public class SupplierController {
         return Result.success();
     }
 
-    @RequireRole({0})
+    @RequirePermission("supplier:delete")
     @DeleteMapping("/{id}")
     public Result delete(@PathVariable Integer id) {
         log.info("删除供应商：id={}", id);

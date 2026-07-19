@@ -2,6 +2,7 @@ package com.bioreagent.service.impl;
 
 
 import com.bioreagent.constant.JwtClaimsConstant;
+import com.bioreagent.constant.MessageConstant;
 import com.bioreagent.entity.User;
 import com.bioreagent.mapper.UserMapper;
 import com.bioreagent.properties.JwtProperties;
@@ -29,12 +30,12 @@ public class LoginServiceImpl implements LoginService {
         User user = userMapper.getByUsername(username);
 
         if(user == null){
-            return Result.error("用户不存在");
+            return Result.error(MessageConstant.USER_NOT_FOUND);
         }
 
         String passwordInDB = user.getPassword();
         if (!password.equals(passwordInDB)) {
-            return Result.error("用户名或密码错误");
+            return Result.error(MessageConstant.USERNAME_OR_PASSWORD_ERROR);
         }
 
         LoginVO loginVO = new LoginVO();

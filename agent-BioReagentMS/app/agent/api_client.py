@@ -16,8 +16,6 @@ class BioReagentClient:
         self._username: Optional[str] = None
         self._password: Optional[str] = None
 
-    # ── 认证 ──────────────────────────────
-
     async def login(self, username: str, password: str) -> str:
         """登录并缓存 token,之后所有请求自动携带"""
         self._username = username
@@ -38,7 +36,6 @@ class BioReagentClient:
         if not self.token and self._username:
             await self.login(self._username, self._password) # type: ignore
 
-    # ── 通用请求 ──────────────────────────
 
     async def request(
         self, method: str, path: str, params: dict = None, body: dict = None # type: ignore

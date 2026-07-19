@@ -92,6 +92,12 @@ const router = createRouter({
           component: () => import('@/views/Chat.vue'),
           meta: { title: '智能助手', icon: 'ChatDotRound' },
         },
+        {
+          path: 'web-search',
+          name: 'WebSearch',
+          component: () => import('@/views/WebSearch.vue'),
+          meta: { title: '联网检索', icon: 'Search' },
+        },
       ],
     },
     {
@@ -102,14 +108,14 @@ const router = createRouter({
 })
 
 // 路由守卫 — 未登录跳登录页
-router.beforeEach((to, _from, next) => {
+router.beforeEach((to) => {
   const token = localStorage.getItem('token')
+  // 过滤掉 "undefined" / "null" 字符串（localStorage 可能存了异常值）
+  const validToken = token && token !== 'undefined' && token !== 'null' ? token : null
   if (to.meta.noAuth) {
-    if (token) return next('/dashboard')
-    return next()
+    return validToken ? '/dashboard' : undefined
   }
-  if (!token) return next('/login')
-  next()
+  return validToken ? undefined : '/login'
 })
 
 export default router

@@ -30,12 +30,10 @@ public class OperationLogAspect {
     @Autowired
     private UserMapper userMapper;
 
-    /** 常见的"名称"字段候选 */
     private static final String[] NAME_FIELDS = {
         "name", "reagentName", "batchNumber", "orderNumber", "receiptNumber", "username"
     };
 
-    /** 常见的"数量"字段候选 */
     private static final String[] QUANTITY_FIELDS = {
         "quantity", "initialQuantity", "total", "currentQuantity"
     };
@@ -52,8 +50,8 @@ public class OperationLogAspect {
 
         // 2. 解析注解信息
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
-        String action = parseAction(signature);
         String module = parseModule(signature);
+        String action = module + parseAction(signature);
 
         // 3. 从方法参数中提取目标名和数量
         Object[] args = joinPoint.getArgs();
@@ -89,7 +87,6 @@ public class OperationLogAspect {
             detail.append(" ×").append(quantity);
         }
 
-        // 6. 截断过长文本，避免超出数据库字段
         String targetIdVal = targetName != null ? targetName : "";
         if (targetIdVal.length() > 100) {
             targetIdVal = targetIdVal.substring(0, 97) + "...";
@@ -116,18 +113,16 @@ public class OperationLogAspect {
         return result;
     }
 
-    /** 从注解中提取 module */
+
     private String parseModule(MethodSignature signature) {
         for (Annotation ann : signature.getMethod().getAnnotations()) {
             try {
-                // 用反射调 ann.module()
                 return (String) ann.getClass().getMethod("module").invoke(ann);
             } catch (Exception ignored) {}
         }
         return "未知";
     }
 
-    /** 从注解中提取操作类型 */
     private String parseAction(MethodSignature signature) {
         for (Annotation ann : signature.getMethod().getAnnotations()) {
             String name = ann.annotationType().getSimpleName();
@@ -139,7 +134,6 @@ public class OperationLogAspect {
         return "未知";
     }
 
-    /** 从方法参数中提取目标名称 */
     private String extractTargetName(Object[] args) {
         if (args == null || args.length == 0) return "";
 
@@ -167,18 +161,21 @@ public class OperationLogAspect {
                 continue;
             }
 
-            // 基本类型 / 包装类 → 直接返回
-            if (arg instanceof String || arg instanceof Number) {
+            // String  直接作为目标名返回
+            if (arg instanceof String) {
                 return arg.toString();
             }
 
-            // DTO —— 尝试反射提取名称字段
+            // Number  跳过（通常是 id），不做为名称
+            if (arg instanceof Number) {
+                continue;
+            }
+
             String name = tryExtractName(arg);
             if (name != null && !name.isEmpty()) {
                 return name;
             }
 
-            // 实在找不到 → toString 截断
             String s = arg.toString();
             if (s.length() > 60) s = s.substring(0, 57) + "...";
             return s;
@@ -186,7 +183,6 @@ public class OperationLogAspect {
         return "";
     }
 
-    /** 试从对象中提取名称字段 */
     private String tryExtractName(Object obj) {
         if (obj == null) return null;
         for (String fieldName : NAME_FIELDS) {
@@ -202,9 +198,9 @@ public class OperationLogAspect {
         return null;
     }
 
-    /** 从方法参数中提取数量 */
     private Integer extractQuantity(Object[] args) {
         if (args == null) return null;
+        Integer lastNumber = null;
         for (Object arg : args) {
             if (arg == null) continue;
             String clsName = arg.getClass().getSimpleName();
@@ -213,12 +209,11 @@ public class OperationLogAspect {
                 continue;
             }
 
-            // 基本类型直接就是数量
             if (arg instanceof Integer || arg instanceof Long) {
-                return ((Number) arg).intValue();
+                lastNumber = ((Number) arg).intValue();
+                continue;
             }
 
-            // DTO —— 反射找数量字段
             for (String fieldName : QUANTITY_FIELDS) {
                 try {
                     Field f = findField(arg.getClass(), fieldName);
@@ -232,7 +227,7 @@ public class OperationLogAspect {
                 } catch (Exception ignored) {}
             }
         }
-        return null;
+        return lastNumber;
     }
 
     private Field findField(Class<?> clazz, String fieldName) {

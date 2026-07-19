@@ -4,7 +4,7 @@ import com.bioreagent.QueryParam.DeliveryOrderQueryParam;
 import com.bioreagent.annotation.OperationAdd;
 import com.bioreagent.annotation.OperationDelete;
 import com.bioreagent.annotation.OperationUpdate;
-import com.bioreagent.annotation.RequireRole;
+import com.bioreagent.annotation.RequirePermission;
 import com.bioreagent.dto.DeliveryOrderDTO;
 import com.bioreagent.result.PageResult;
 import com.bioreagent.result.Result;
@@ -22,6 +22,7 @@ public class DeliveryOrderController {
     @Autowired
     private DeliveryOrderService deliveryOrderService;
 
+    @RequirePermission("delivery:query")
     @GetMapping
     public Result<PageResult<DeliveryOrderVO>> page(DeliveryOrderQueryParam queryParam) {
         log.info("分页查询出库单：{}", queryParam);
@@ -29,6 +30,7 @@ public class DeliveryOrderController {
         return Result.success(pageResult);
     }
 
+    @RequirePermission("delivery:query")
     @GetMapping("/{id}")
     public Result<DeliveryOrderVO> getById(@PathVariable Integer id) {
         log.info("查询出库单：{}", id);
@@ -37,7 +39,7 @@ public class DeliveryOrderController {
     }
 
     @OperationAdd(module = "出库")
-    @RequireRole({0, 1, 2})
+    @RequirePermission("delivery:add")
     @PostMapping
     public Result add(@RequestBody DeliveryOrderDTO deliveryOrderDTO) {
         log.info("新增出库单：{}", deliveryOrderDTO);
@@ -46,7 +48,7 @@ public class DeliveryOrderController {
     }
 
     @OperationUpdate(module = "出库")
-    @RequireRole({0, 1})
+    @RequirePermission("delivery:update")
     @PutMapping
     public Result update(@RequestBody DeliveryOrderDTO deliveryOrderDTO) {
         log.info("更新出库单：{}", deliveryOrderDTO);
@@ -55,7 +57,7 @@ public class DeliveryOrderController {
     }
 
     @OperationDelete(module = "出库")
-    @RequireRole({0, 1})
+    @RequirePermission("delivery:delete")
     @DeleteMapping("/{id}")
     public Result delete(@PathVariable Integer id) {
         log.info("删除出库单：{}", id);

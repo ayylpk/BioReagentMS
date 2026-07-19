@@ -9,6 +9,8 @@ from .warning import query_warnings, count_unresolved_warnings
 from .report import query_low_stock_top10, query_high_stock_top10
 from .batch import query_reagent_batches, get_batch_detail
 from .operation import query_operation_logs
+from .knowledge import search_local_knowledge
+from .web_search_tool import web_search_with_save
 
 __all__ = [
     "search_reagent_stock",
@@ -24,4 +26,6 @@ __all__ = [
     "query_reagent_batches",
     "get_batch_detail",
     "query_operation_logs",
+    "search_local_knowledge",
+    "web_search_with_save"
 ]

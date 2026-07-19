@@ -3,7 +3,7 @@ package com.bioreagent.controller;
 import com.bioreagent.QueryParam.WarehouseReceiptQueryParam;
 import com.bioreagent.annotation.OperationAdd;
 import com.bioreagent.annotation.OperationDelete;
-import com.bioreagent.annotation.RequireRole;
+import com.bioreagent.annotation.RequirePermission;
 import com.bioreagent.dto.WarehouseReceiptDTO;
 import com.bioreagent.result.PageResult;
 import com.bioreagent.result.Result;
@@ -24,6 +24,7 @@ public class WarehouseReceiptController {
     @Autowired
     private WarehouseReceiptService warehouseReceiptService;
 
+    @RequirePermission("receipt:query")
     @GetMapping("/page")
     @Operation(summary = "分页查询入库单列表")
     public Result<PageResult<WarehouseReceiptVO>> page(WarehouseReceiptQueryParam queryParam) {
@@ -32,6 +33,7 @@ public class WarehouseReceiptController {
         return Result.success(pageResult);
     }
 
+    @RequirePermission("receipt:query")
     @GetMapping("/{id}")
     @Operation(summary = "根据ID查询入库单详情")
     public Result<WarehouseReceiptVO> getById(@PathVariable Long id) {
@@ -41,7 +43,7 @@ public class WarehouseReceiptController {
     }
 
     @OperationAdd(module = "入库")
-    @RequireRole({0, 1})
+    @RequirePermission("receipt:add")
     @PostMapping
     @Operation(summary = "新增入库单")
     public Result<Void> add(@RequestBody WarehouseReceiptDTO warehouseReceiptDTO) {
@@ -51,7 +53,7 @@ public class WarehouseReceiptController {
     }
 
     @OperationDelete(module = "入库")
-    @RequireRole({0, 1})
+    @RequirePermission("receipt:delete")
     @DeleteMapping("/{id}")
     @Operation(summary = "删除入库单")
     public Result<Void> delete(@PathVariable Long id) {

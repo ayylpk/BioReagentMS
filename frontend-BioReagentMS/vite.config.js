@@ -16,6 +16,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    host: '0.0.0.0',   // 允许外部浏览器访问
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
@@ -26,6 +27,11 @@ export default defineConfig({
         target: 'http://localhost:2024',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/agent/, ''),
+      },
+      '/search': {
+        target: 'http://localhost:8123',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/search/, ''),
       },
     },
   },

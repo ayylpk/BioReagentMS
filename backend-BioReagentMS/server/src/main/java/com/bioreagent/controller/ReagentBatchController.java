@@ -4,7 +4,7 @@ import com.bioreagent.QueryParam.ReagentBatchQueryParam;
 import com.bioreagent.annotation.OperationAdd;
 import com.bioreagent.annotation.OperationDelete;
 import com.bioreagent.annotation.OperationUpdate;
-import com.bioreagent.annotation.RequireRole;
+import com.bioreagent.annotation.RequirePermission;
 import com.bioreagent.dto.ReagentBatchDTO;
 import com.bioreagent.result.PageResult;
 import com.bioreagent.result.Result;
@@ -29,6 +29,7 @@ public class ReagentBatchController {
     @Autowired
     private ReagentBatchService reagentBatchService;
 
+    @RequirePermission("batch:query")
     @GetMapping
     public Result<PageResult<ReagentBatchVO>> page(ReagentBatchQueryParam queryParam) {
         log.info("分页查询批次库存：{}", queryParam);
@@ -36,6 +37,7 @@ public class ReagentBatchController {
         return Result.success(pageResult);
     }
 
+    @RequirePermission("batch:query")
     @GetMapping("/{id}")
     public Result<ReagentBatchVO> getById(@PathVariable Long id) {
         log.info("查询批次详情：id={}", id);
@@ -44,7 +46,7 @@ public class ReagentBatchController {
     }
 
     @OperationAdd(module = "批次")
-    @RequireRole({0, 1})
+    @RequirePermission("batch:add")
     @PostMapping
     public Result save(@RequestBody ReagentBatchDTO dto) {
         log.info("新增批次：{}", dto);
@@ -53,7 +55,7 @@ public class ReagentBatchController {
     }
 
     @OperationUpdate(module = "批次")
-    @RequireRole({0, 1})
+    @RequirePermission("batch:update")
     @PutMapping
     public Result update(@RequestBody ReagentBatchDTO dto) {
         log.info("更新批次：{}", dto);
@@ -62,7 +64,7 @@ public class ReagentBatchController {
     }
 
     @OperationDelete(module = "批次")
-    @RequireRole({0, 1})
+    @RequirePermission("batch:delete")
     @DeleteMapping("/{id}")
     public Result delete(@PathVariable Long id) {
         log.info("删除批次：id={}", id);

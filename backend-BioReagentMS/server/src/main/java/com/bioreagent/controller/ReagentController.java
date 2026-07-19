@@ -4,7 +4,7 @@ import com.bioreagent.QueryParam.ReagentQueryParam;
 import com.bioreagent.annotation.OperationAdd;
 import com.bioreagent.annotation.OperationDelete;
 import com.bioreagent.annotation.OperationUpdate;
-import com.bioreagent.annotation.RequireRole;
+import com.bioreagent.annotation.RequirePermission;
 import com.bioreagent.dto.ReagentDTO;
 import com.bioreagent.result.PageResult;
 import com.bioreagent.result.Result;
@@ -24,6 +24,7 @@ public class ReagentController {
     @Autowired
     private ReagentService reagentService;
 
+    @RequirePermission("reagent:query")
     @GetMapping
     public Result<PageResult<ReagentVO>> page(ReagentQueryParam reagentQueryParam){
         log.info("分页查询试剂信息：{}", reagentQueryParam);
@@ -31,6 +32,7 @@ public class ReagentController {
         return Result.success(pageResult);
     }
 
+    @RequirePermission("reagent:query")
     @GetMapping("{id}")
     public Result getById(@PathVariable Long id){
         log.info("查询试剂信息：{}", id);
@@ -39,7 +41,7 @@ public class ReagentController {
     }
 
     @OperationUpdate(module = "试剂")
-    @RequireRole({0, 1})
+    @RequirePermission("reagent:update")
     @PutMapping
     public Result update(@RequestBody ReagentDTO reagentDTO){
         log.info("更新试剂信息：{}", reagentDTO);
@@ -48,7 +50,7 @@ public class ReagentController {
     }
 
     @OperationDelete(module = "试剂")
-    @RequireRole({0, 1})
+    @RequirePermission("reagent:delete")
     @DeleteMapping
     public Result delete(@RequestParam List<Integer> ids){
         log.info("删除试剂信息：{}", ids);
@@ -57,7 +59,7 @@ public class ReagentController {
     }
 
     @OperationAdd(module = "试剂")
-    @RequireRole({0, 1, 2})
+    @RequirePermission("reagent:add")
     @PostMapping
     public Result add(@RequestBody ReagentDTO reagentDTO){
         log.info("新增试剂信息：{}", reagentDTO);

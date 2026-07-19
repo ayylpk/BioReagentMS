@@ -42,4 +42,6 @@ public class DeliveryOrderDTO implements Serializable {
     private String rejectionReason;
 
     private String remark;
+
+    private LocalDateTime createTime; // 创建时间
 }
