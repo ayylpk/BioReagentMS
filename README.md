@@ -16,6 +16,8 @@
 | 操作日志 | 自动记录增删改操作，可追溯 |
 | 报表导出 | 库存报表、入库报表 Excel 导出 |
 | 智能助手 | AI 对话式查询，支持自然语言问试剂、库存、预警、批次等信息 |
+| 联网检索 | Tavily 搜索 → 自动存入 MySQL → 确认入库 Chroma 向量知识库 |
+| 知识库管理 | ChromaDB 向量存储 + Ollama Embedding，支持语义搜索和 CAS 精确过滤 |
 
 ## 技术栈
 
@@ -33,6 +35,8 @@
 | HTTP 客户端 | Axios |
 | AI Agent | LangGraph + LangChain + DeepSeek |
 | Agent 工具 | Tavily Search（联网检索） |
+| 向量数据库 | ChromaDB + Ollama Embedding (BGE-M3) |
+| Python 服务 | FastAPI + SQLAlchemy 异步 |
 
 ## 项目结构
 
@@ -48,11 +52,12 @@ BioReagentMS/
 │       ├── router/                # 路由配置
 │       ├── stores/                # Pinia 状态管理
 │       ├── utils/                 # Axios 封装
-│       └── views/                 # 页面组件（含 Chat.vue 智能助手）
-├── agent-BioReagentMS/            # AI Agent（LangGraph）
+│       └── views/                 # 页面组件（含 Chat.vue、WebSearch.vue）
+├── agent-BioReagentMS/            # AI Agent（LangGraph）+ FastAPI 存储服务
 │   ├── app/agent/                 # Agent 定义与 API 客户端
-│   ├── app/common/tools/          # 业务工具函数（试剂/库存/预警等）
-│   ├── main.py                    # Agent 入口
+│   ├── app/common/tools/          # 业务工具 + knowledge(Chroma) + web_search_tool
+│   ├── database.py                # FastAPI 存储服务 (端口 8123)
+│   ├── main.py                    # Agent 入口（自动拉起 FastAPI）
 │   └── langgraph.json             # LangGraph 配置
 ├── env.example                    # 环境变量模板（复制为 .env 使用）
 └── .gitignore
@@ -65,8 +70,9 @@ BioReagentMS/
 | 后端 API | 8080 | Spring Boot |
 | 前端 | 5173 | Vite 开发服务器 |
 | AI Agent | 2024 | LangGraph 服务 |
+| 存储服务 | 8123 | FastAPI（自动启动） |
 
-前端代理：`/api` → `localhost:8080`，`/agent` → `localhost:2024`
+前端代理：`/api` → `localhost:8080`，`/agent` → `localhost:2024`，`/search` → `localhost:8123`
 
 ## License
 
