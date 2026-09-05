@@ -45,6 +45,9 @@ logs/
 checkpoints.db
 **/resources/chroma/
 
+# 向量库数据（整库向量，绝不入库）
+qdrant-data/
+
 # Build
 build/
 out/

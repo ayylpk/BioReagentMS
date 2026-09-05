@@ -1,0 +1,35 @@
+{
+  "name": "tsagent",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "langgraph dev",
+    "service": "bun run src/service/server.ts",
+    "ingest": "bun run scripts/ingest.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@langchain/core": "^1",
+    "@langchain/langgraph": "^1",
+    "@langchain/langgraph-checkpoint-sqlite": "^1.0.4",
+    "@langchain/openai": "^1",
+    "@node-rs/jieba": "^2.0.2",
+    "@qdrant/js-client-rest": "^1",
+    "@tavily/core": "latest",
+    "fflate": "^0.8.3",
+    "hono": "^4",
+    "mammoth": "^1",
+    "mysql2": "^3",
+    "pdfjs-dist": "^5",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@langchain/langgraph-cli": "latest",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

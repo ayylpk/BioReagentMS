@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DocProfile",
+  "description": "三层探测的产出：解析策略只看档案、照档案执行（确定性分流，不让 LLM 猜文件）。inspect/probe.ts 写入，parse/route.ts 消费；pytools/parse.py 的 stdout 也按本文件 $defs 吐。",
+  "type": "object",
+  "required": ["file", "family", "strategy"],
+  "properties": {
+    "file": { "type": "string", "description": "绝对路径" },
+    "family": { "enum": ["docx", "xlsx", "pdf", "image", "text", "legacy-doc", "unknown"] },
+    "magic": { "type": "string", "description": "魔数判定实际格式：zip-ooxml / ole2 / pdf / png / jpeg ..." },
+    "docx": {
+      "type": "object",
+      "description": "结构探测（document.xml 数标签）——docx 是逻辑流，双栏不影响抽取顺序，只记录",
+      "properties": {
+        "columns": { "type": "integer", "description": "w:cols num，最大节" },
+        "tableCount": { "type": "integer" },
+        "layoutTables": { "type": "integer", "description": "疑似排版假表格（单行多格且格内是大段文字）" },
+        "textBoxes": { "type": "integer", "description": "w:txbxContent 且文字量超阈值的个数" },
+        "drawingCount": { "type": "integer" },
+        "paraChars": { "type": "integer", "description": "正文总字符，与 drawingCount 比出图文倒挂" }
+      }
+    },
+    "pdf": {
+      "type": "object",
+      "description": "版式探测（文字层 + 坐标）",
+      "properties": {
+        "hasTextLayer": { "type": "boolean" },
+        "pages": { "type": "integer" },
+        "charsPerPage": { "type": "number" },
+        "columns": { "enum": [1, 2, "multi", "unknown"] },
+        "gapConsistentRatio": { "type": "number", "description": "栏间隙位置在页间的稳定度 0~1" },
+        "lineDensity": { "type": "number", "description": "线框密度，表格探测" },
+        "garbledRatio": { "type": "number", "description": "直抽文字乱码率" }
+      }
+    },
+    "strategy": {
+      "enum": ["L0-py", "L0-direct", "L0-column-sort", "L0-cell-join", "L1-py-vl", "L2-review"],
+      "description": "route.ts 由档案推导的执行方案：L0-py=pytools 主力（pymupdf4llm/markitdown/openpyxl，失败落回手写 L0-*）/ 直抽 / 坐标重排 / 表格按列拼接 / VL 重解析 / 直接进人审"
+    },
+    "reason": { "type": "string", "description": "策略判定理由（日志与人审页面展示）" }
+  },
+  "$defs": {
+    "Blocks": {
+      "type": "array",
+      "description": "解析统一输出：任何格式任何路径，出口都是这个 block 数组",
+      "items": {
+        "type": "object",
+        "required": ["type", "markdown"],
+        "properties": {
+          "type": { "enum": ["heading", "text", "table", "image"] },
+          "level": { "type": "integer", "description": "heading 层级" },
+          "page": { "type": "integer" },
+          "bbox": { "type": "array", "items": { "type": "number" }, "description": "[x0,y0,x1,y1] 溯源坐标" },
+          "markdown": { "type": "string", "description": "table: 简单表 md、合并单元格 html 表；image: ![一句描述](assets/xx)" },
+          "html": { "type": "string", "description": "复杂表原文" }
+        }
+      }
+    }
+  }
+}

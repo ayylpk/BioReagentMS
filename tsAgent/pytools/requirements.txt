@@ -1,0 +1,7 @@
+# pytools 依赖（9/5 定型：pymupdf4llm 扛 PDF、markitdown 扛 docx/pptx、openpyxl 扛 xlsx）
+# ⚠️ 装法用 uv（直连官方源）：uv pip install --system -r requirements.txt
+#   清华镜像缺 pymupdf4llm；pip 全局源是清华的要 -i https://pypi.org/simple 覆盖
+pymupdf4llm>=0.1        # PDF→markdown：阅读顺序+框线表格（底层 PyMuPDF，AGPL——个人/demo 可用）
+markitdown[docx,pptx]>=0.1  # 微软官方；docx/pptx 是插件 extra，不带基础包读不了（mammoth 内核）
+openpyxl>=3.1           # xlsx sheet 级原子抽取（MIT）
+openai>=1.4             # 只为调 DashScope 兼容口的 qwen-vl-ocr（扫描件/图片路）

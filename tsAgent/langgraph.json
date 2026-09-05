@@ -1,0 +1,6 @@
+{
+  "graphs": {
+    "reagent_assistant": "./src/agent/index.ts:graph"
+  },
+  "env": ".env"
+}

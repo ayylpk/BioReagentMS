@@ -1,0 +1,47 @@
+# dependencies (bun install)
+node_modules
+
+# output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+_.log
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# IntelliJ based IDEs
+.idea
+
+# Finder (MacOS) folder config
+.DS_Store
+
+# ── tsAgent 追加 ──
+# 语料与资产不入库（体积大 + 内部文件）
+resources/*
+!resources/.gitkeep
+samples/*
+!samples/README.md
+# py 侧
+pytools/__pycache__/
+pytools/.venv/
+# langgraph 本地状态
+.langgraph_api/
+checkpoints.db

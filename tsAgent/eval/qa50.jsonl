@@ -1,0 +1,2 @@
+{"q": "浓硫酸溅到皮肤上怎么急救？", "expect": {"tool": "search_knowledge", "source_contains": "硫酸", "section": "急救措施"}, "note": "示例格式：问题→期望路由/期望命中，凑满 50 题"}
+{"q": "无水乙醇现在库存有多少瓶？", "expect": {"tool": "query_reagent_db"}, "note": "结构化问题必须走 MySQL，不许进向量库"}
