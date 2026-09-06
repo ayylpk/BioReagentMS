@@ -3,7 +3,7 @@
 // 读侧提醒：生产 collection 的稠密字段是 named "dense"——ragNode/searchDoc 接入真库那天加 using:'dense'
 import { QdrantClient } from '@qdrant/js-client-rest'
 import { config } from '../../config/env'
-import { embed } from '../embed/ollama'
+import { embed } from '../embed' // 门面选择后端（EMBED_BACKEND），写读永远同模
 import { toSparse } from '../sparse/bm25'
 import { pool } from '../../db/mysql'
 import type { Chunk, DocProfile } from '../inspect/profile'
@@ -11,9 +11,10 @@ import type { Chunk, DocProfile } from '../inspect/profile'
 // 台账表（接线日跑一次；logIngest 对缺表只 warn，旁路化）：
 // CREATE TABLE IF NOT EXISTS ingest_log (
 //   doc_id VARCHAR(128) PRIMARY KEY, file VARCHAR(512), status VARCHAR(16),
-//   chunks INT, flags TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)
+//   chunks INT, cost_ms INT, flags TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)
+// 老库补列：ALTER TABLE ingest_log ADD COLUMN cost_ms INT NULL AFTER chunks
 
-const qdrant = new QdrantClient({ url: config.QDRANT_URL })
+const qdrant = new QdrantClient({ url: config.QDRANT_URL, apiKey: config.QDRANT_API_KEY || undefined })
 const COLL = config.QDRANT_COLLECTION
 const EMBED_BATCH = 32 // v4/bge 批量上限内取稳；Ollama 不限但内存友好
 
@@ -71,13 +72,18 @@ export async function upsertChunks(profile: DocProfile, chunks: Chunk[]): Promis
 	}
 }
 
+/** 整档删除：向量库按 doc_id 清空（与 upsert 同款 filter 写法），知识库页 / 重摄前用 */
+export async function deleteDoc(docId: string): Promise<void> {
+	await qdrant.delete(COLL, { filter: { must: [{ key: 'doc_id', match: { value: docId } }] }, wait: true })
+}
+
 /** 摄取台账 upsert：表没建/MySQL 没起都不许挡主流程（旁路化降级，同 sys_task 桥姿势） */
-export async function logIngest(entry: { docId: string; file: string; status: string; chunks: number; flags: string[] }): Promise<void> {
+export async function logIngest(entry: { docId: string; file: string; status: string; chunks: number; flags: string[]; costMs?: number }): Promise<void> {
 	try {
 		await pool.query(
-			`INSERT INTO ingest_log (doc_id, file, status, chunks, flags) VALUES (?, ?, ?, ?, ?)
-			 ON DUPLICATE KEY UPDATE status=VALUES(status), chunks=VALUES(chunks), flags=VALUES(flags)`,
-			[entry.docId, entry.file, entry.status, entry.chunks, entry.flags.join('\n')],
+			`INSERT INTO ingest_log (doc_id, file, status, chunks, cost_ms, flags) VALUES (?, ?, ?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE status=VALUES(status), chunks=VALUES(chunks), cost_ms=VALUES(cost_ms), flags=VALUES(flags)`,
+			[entry.docId, entry.file, entry.status, entry.chunks, entry.costMs ?? null, entry.flags.join('\n')],
 		)
 	} catch (e) {
 		console.warn('[store] 台账写入跳过（ingest_log 缺表或 MySQL 未起）:', (e as Error).message.slice(0, 100))

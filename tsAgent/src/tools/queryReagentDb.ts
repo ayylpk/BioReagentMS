@@ -1,19 +1,16 @@
-// 路1：结构化查询 —— BioReagentMS 主库 MySQL，只读
-// 纪律：只允许 SELECT；预置"查询模板白名单"（sql_name→参数化语句），用户输入永远是 params 不是 SQL 本体
-// （Java 类比：MyBatis 的 #{} 预编译，${} 拼接在这里等于零容忍事故）
+// 路1：结构化查询 —— 执行体在 dbTemplates.ts（SQL 白名单），这里只是 LangChain 工具皮
+// （图的 db 分支直接调 runTemplate；这层皮留给将来 ReAct 化或 MCP 暴露用）
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
+import { runTemplate, renderCatalog } from './dbTemplates'
 
 export const queryReagentDb = tool(
-  async ({ sql_name, params }) => {
-    // TODO: 白名单模板表 + src/db/mysql.ts 执行 + 结果裁剪（行数上限）
-    return `TODO: ${sql_name} ${JSON.stringify(params)}`
-  },
+  async ({ sql_name, params }) => runTemplate(sql_name, params ?? {}),
   {
     name: 'query_reagent_db',
-    description: '查询试剂台账结构化数据：库存、存放位置、价格、效期、规格。按 sql_name 选查询模板。',
+    description: `查询试剂台账结构化数据：库存、存放位置、价格、效期、规格。只能从白名单模板中选。\n${renderCatalog()}`,
     schema: z.object({
-      sql_name: z.string().describe('白名单模板名，如 stock_by_cas / expiring_soon'),
+      sql_name: z.string().describe('白名单模板名，如 stock_by_name / expiring_soon / low_stock'),
       params: z.record(z.string(), z.string()).optional().describe('模板参数（值，不是 SQL）'),
     }),
   },

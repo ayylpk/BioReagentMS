@@ -20,10 +20,11 @@ export interface IngestOptions { dryRun?: boolean }
 const baseName = (file: string) => file.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '') // 与 bySection 的 docId 同口径
 
 export async function ingestFile(file: string, opts: IngestOptions = {}): Promise<IngestResult> {
+	const t0 = performance.now() // 单档全链耗时进台账，供"每文档解析耗时"计时表用
 	const result: IngestResult = { file, status: 'failed', chunks: 0, flags: [] }
 	// ⚠️ 必须 await：ingest CLI 打印完就 process.exit(0)，fire-and-forget 的台账写库赶不上死亡
 	const finish = async () => {
-		await logIngest({ docId: baseName(file), file, status: result.status, chunks: result.chunks, flags: result.flags })
+		await logIngest({ docId: baseName(file), file, status: result.status, chunks: result.chunks, flags: result.flags, costMs: Math.round(performance.now() - t0) })
 		return result
 	}
 	try {

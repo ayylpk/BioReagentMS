@@ -13,6 +13,7 @@ export const config = z
     DASHSCOPE_API_KEY: req('DASHSCOPE_API_KEY'),
     EMBEDDING_MODEL: z.string().default('text-embedding-v4'),
     EMBED_DIM: num(1024),
+    EMBED_BACKEND: z.enum(['ollama', 'dashscope']).default('ollama'), // 上线五哨①的切换位
     TAVILY_API_KEY: req('TAVILY_API_KEY'),
     MYSQL_HOST: z.string().default('127.0.0.1'),
     MYSQL_PORT: num(3306),
@@ -21,6 +22,7 @@ export const config = z
     MYSQL_DB: z.string().default('bioreagentms'),
     QDRANT_URL: url('http://127.0.0.1:6333'),
     QDRANT_COLLECTION: z.string().default('reagent_knowledge'),
+    QDRANT_API_KEY: z.string().default(''), // 公网部署必设（Qdrant 侧 QDRANT__SERVICE__API_KEY 同值）；本机留空
     VL_MODEL: z.string().default('qwen-vl-ocr-latest'),
     SERVICE_PORT: num(8123),
   })

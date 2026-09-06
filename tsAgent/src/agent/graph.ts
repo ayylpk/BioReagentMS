@@ -1,26 +1,26 @@
-// ═══ 主图装配（这里开始就是你的地盘）═══
-// 推荐骨架：createReactAgent(模型 + 三工具 + SYSTEM_PROMPT)
-//   import { createReactAgent } from '@langchain/langgraph/prebuilt'
-//   import { ChatOpenAI } from '@langchain/openai'   // OpenAI 兼容口，DeepSeek/DashScope 都走它
-//
-// 并发要点（这次改造的目的之一）：
-//   ① 图内并发：三路检索用并行分支 / Send API 同时打 MySQL+Qdrant+Tavily 再汇总
-//   ② 会话并发：Node 事件循环全异步，多用户流式互不阻塞
-//      （对照 py 老版：main.py 拿 threading 把 uvicorn 塞守护线程，丑且脆）
-import { StateGraph, START, END, Annotation, messagesStateReducer, MemorySaver, Graph, type GraphNode } from '@langchain/langgraph'
+// ═══ 主图装配：三路意图路由 + 本地未命中→联网兜底 ═══
+// 分流铁律（code-over-tools）：路由/判空/降级这些确定性逻辑全由代码节点做，
+//   LLM 只干两件结构化的事——"一句话分类"（router）和"从白名单挑模板抽参"（dbQuery），不许它自由发挥
+// 流程：
+//   START → router ─ db ────────→ dbQuery ─(命中)──────────→ result
+//                        (空/失败)→ web ──┐
+//           START → router ─ knowledge → getQuerys → rag ─(有素材)→ result
+//                                        (空/未命中)→ web ──┤
+//           START → router ─ chat ─────────────────────────→ result
+import { StateGraph, START, END, Annotation, messagesStateReducer, MemorySaver, type GraphNode } from '@langchain/langgraph'
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages'
-import { messageToOpenAIRole, ChatOpenAI } from '@langchain/openai'
+import { ChatOpenAI } from '@langchain/openai'
 import { z } from 'zod'
 import { config } from '../config/env'
-import { searchDoc, type Retrieved } from '../rag/embed/ollama'
-import { searchSparse } from '../rag/sparse/bm25'
+import { hybridSearch } from '../rag/search'
+import { runTemplate, renderCatalog } from '../tools/dbTemplates'
+import { webSearchRun } from '../tools/webSearch'
 
 // ── 会话层：短期记忆窗口 / 多用户线程键 ──
 const MEMORY_WINDOW = 20 // 短期记忆只留最近 20 条（≈10 轮问答），谁再往里塞都当场截
 
-/** 会话标识：当前时间 + 4 位随机数字 —— 前端开聊时生成一次，之后每条消息带上它
- *  ⚠️ 走 langgraph server 时它的 thread_id 要求 UUID，接线日二选一：
- *     要么前端直接收 server 分配的 thread UUID，要么我们自己存 会话键→thread UUID 映射 */
+/** 会话标识：当前时间 + 4 位随机数字 —— 脚本直调用
+ *  ⚠️ HTTP 端（/agent/runs/stream）前端用 crypto.randomUUID()，两边只是字符串键，互不影响 */
 export function newThreadId(): string {
 	const rand = String(Math.floor(Math.random() * 10000)).padStart(4, '0')
 	return `${Date.now()}${rand}`
@@ -31,50 +31,120 @@ export function ragConfig(threadId: string) {
 	return { configurable: { thread_id: threadId } }
 }
 
-
 const AgentState = Annotation.Root({
 	messages: Annotation<BaseMessage[]>({
-		default: ()=>[],
-		// 维护职责在这：先走 langgraph 官方 append 语义（按 id 去重/合并），再切窗口
+		default: () => [],
+		// 先走 langgraph 官方 append 语义（按 id 去重/合并），再切窗口
 		// 不截 = channel 无界增长，每步 checkpoint 全量写盘越来越肥，最后爆的是存档不是 prompt
 		reducer: (x, y) => messagesStateReducer(x, y).slice(-MEMORY_WINDOW),
 	}),
-	question: Annotation<string>({
-		default: ()=>"",
-		reducer: (x,y)=>y,
-	}),
-	RAGcontents:Annotation<string[]>({
-		default: ()=>[],
-		reducer: (x,y)=>y,
-	}),
-	querys: Annotation<string[]>({
-		default: ()=>[],
-		reducer: (x,y)=>y,
-	}),
-	llmCalls: Annotation<number>({
-        default: () => 0,
-        reducer: (x, y) => x + y,
-    }),
-});
+	question: Annotation<string>({ default: () => '', reducer: (_x, y) => y }),
+	route: Annotation<'db' | 'knowledge' | 'chat'>({ default: () => 'knowledge', reducer: (_x, y) => y }),
+	// 免登录演示通道（/assistant）置 false：台账路整个关闭 —— 库存是实验室内部数据，匿名者只能碰公开文献
+	allowDb: Annotation<boolean>({ default: () => true, reducer: (_x, y) => y }),
+	// 演示通道的联网兜底走全局预算（stream 端点发放），预算用尽置 false：本地未命中就直接认怂，不烧 Tavily
+	allowWeb: Annotation<boolean>({ default: () => true, reducer: (_x, y) => y }),
+	querys: Annotation<string[]>({ default: () => [], reducer: (_x, y) => y }),
+	RAGcontents: Annotation<string[]>({ default: () => [], reducer: (_x, y) => y }),
+	dbResult: Annotation<string>({ default: () => '', reducer: (_x, y) => y }),
+	webResult: Annotation<string>({ default: () => '', reducer: (_x, y) => y }),
+	llmCalls: Annotation<number>({ default: () => 0, reducer: (x, y) => x + y }),
+})
 
-// ══ 节点：getQuerys —— question 改写为 RAG 检索查询 ══
-// 模型在这里只是"单次函数调用"（输入问题→输出查询数组），无循环无工具，不是 agent 行为
+// 三个轻 LLM 共用一个底座（分类/抽参/改写这种活不吃模型，deepseek-chat 足够）
+// ⚠️ withStructuredOutput 必须显式 functionCalling：默认 json_schema 路 DeepSeek 直接 400
+//   "This response_format type is unavailable now"（9/6 冒烟实录）；换中转站若连 tool call 也没，才降级 jsonMode
+const liteModel = () =>
+	new ChatOpenAI({ model: config.LLM_MODEL, apiKey: config.LLM_API_KEY, configuration: { baseURL: config.LLM_BASE_URL } })
 
-// 结构化输出：直接吐 { querys: string[] }，不用手写 JSON 解析（deepseek 支持 tools；
-// 若换的中转站不支持 tool call，withStructuredOutput 第二参加 { method: 'jsonMode' as any } 降级）
-const queryRewriter = new ChatOpenAI({
-	model: config.LLM_MODEL,
-	apiKey: config.LLM_API_KEY,
-	configuration: { baseURL: config.LLM_BASE_URL },
-}).withStructuredOutput(
+// ══ 节点：router —— 一句话定路（前置分流，别浪费向量检索的钱去答"你好"）══
+const routerModel = liteModel().withStructuredOutput(
+	z.object({ route: z.enum(['db', 'knowledge', 'chat']).describe('三选一的意图路由') }),
+	{ name: 'route_pick', method: 'functionCalling' },
+)
+
+const ROUTE_PROMPT = `你是试剂库助手的前置分流器，把用户问题归为三类之一，只做分类，不回答。
+- db：问我们台账里的数字——库存数量/批次/存放位置/价格/效期/库存预警（能用 WHERE/GROUP BY 回答的）
+- knowledge：问文档内容——SDS 分节讲了什么（成分/危害/急救/消防/储存/废弃）、规章、SOP、仪器手册
+- chat：寒暄、致谢、问你是谁这类不查数据的话
+判定倾向：出现"还有多少/放哪/哪个批次/快过期/低于安全线"→ db；出现"怎么办/什么危害/说明/要求"→ knowledge；
+多轮指代（"那它放哪"）要结合上文判断。拿不准 db 还是 knowledge 时选 knowledge（向量检索语义宽容，db 模板选错就全错）`
+
+// 公开通道的分类器：db 类根本不在选项里 —— 与其"选了再拦"，不如"没得选"（提示词层面物理隔离）
+const ROUTE_PROMPT_PUBLIC = `你是试剂库演示助手的前置分流器，把用户问题归为两类之一，只做分类，不回答。
+- knowledge：问化学品的公开信息——SDS 分节讲了什么（成分/危害/急救/消防/储存/废弃）、实验规章、操作规范
+- chat：寒暄、致谢、问你是谁，以及一切涉及"我们库存/台账数字"（还有多少/放哪/价格/效期）的问题——本演示通道没有内部台账权限，这类一律归 chat
+多轮指代要结合上文判断`
+
+const routerModelPublic = liteModel().withStructuredOutput(
+	z.object({ route: z.enum(['knowledge', 'chat']).describe('二选一（演示通道无台账权限）') }),
+	{ name: 'route_pick_public', method: 'functionCalling' },
+)
+
+const routerNode: GraphNode<typeof AgentState.State> = async (state) => {
+	const question = state.question.trim()
+	if (!question) return { route: 'chat', llmCalls: 0 }
+	const allowDb = state.allowDb !== false
+	try {
+		const history = state.messages
+			.slice(-4)
+			.map((m) => `${m.getType() === 'human' ? '用户' : '助手'}: ${String(m.content).slice(0, 80)}`)
+			.join('\n')
+		const model = allowDb ? routerModel : routerModelPublic // 提示词层隔离 + 下面条件边双保险
+		const { route } = await model.invoke([
+			new SystemMessage(allowDb ? ROUTE_PROMPT : ROUTE_PROMPT_PUBLIC),
+			new HumanMessage(`${history ? `上文：\n${history}\n\n` : ''}当前问题：${question}`),
+		])
+		return { route: route as 'db' | 'knowledge' | 'chat', llmCalls: 1 }
+	} catch (e) {
+		// 旁路化：分类挂了走 knowledge 主路（向量检索语义宽容，最差也是"未检索到"而不是死图）
+		console.warn('[router] 分流失败，默认 knowledge 路:', (e as Error).message)
+		return { route: 'knowledge', llmCalls: 1 }
+	}
+}
+
+// ══ 节点：dbQuery —— 白名单里挑模板 + 抽参，然后代码执行 ══
+const extractor = liteModel().withStructuredOutput(
 	z.object({
-		querys: z
-			.array(z.string().min(1))
-			.min(1)
-			.max(3)
-			.describe('1~3 条给向量检索用的查询语句'),
+		sql_name: z.string().describe('白名单模板名，选不出就填 none'),
+		params: z.record(z.string(), z.string()).default({}).describe('模板参数（值，不是 SQL）'),
 	}),
-	{ name: 'rag_querys' },
+	{ name: 'db_pick', method: 'functionCalling' },
+)
+
+const DB_EXTRACT_PROMPT = `你是试剂台账查询的抽参模块：把用户问题映射到下面白名单模板之一。
+## 模板白名单
+${renderCatalog()}
+规则：
+1. sql_name 只能是上面列出的名字，一个字都不能改；语义套不上任何模板就填 "none"
+2. 参数从问题里原样提取（名称/CAS 不要改写），问题没给天数就不填 days
+3. 只做映射，不回答问题`
+
+const dbQuery: GraphNode<typeof AgentState.State> = async (state) => {
+	const question = state.question.trim()
+	if (!question) return { dbResult: '', llmCalls: 0 }
+	try {
+		const { sql_name, params } = await extractor.invoke([
+			new SystemMessage(DB_EXTRACT_PROMPT),
+			new HumanMessage(question),
+		])
+		const dbResult = sql_name === 'none' ? '' : await runTemplate(sql_name, params)
+		return { dbResult, llmCalls: 1 }
+	} catch (e) {
+		console.warn('[dbQuery] 抽参/执行失败:', (e as Error).message)
+		return { dbResult: '', llmCalls: 1 }
+	}
+}
+
+/** runTemplate 的返回值哪些算"没查到"（决定要不要升联网兜底）——判空用字符串规则，确定性代码 */
+const dbMiss = (t: string) => !t || /结果为空|未知模板|缺必填|执行失败/.test(t)
+
+// ══ 节点：getQuerys —— question 改写为 RAG 检索查询（同 9/5 版）══
+const queryRewriter = liteModel().withStructuredOutput(
+	z.object({
+		querys: z.array(z.string().min(1)).min(1).max(3).describe('1~3 条给向量检索用的查询语句'),
+	}),
+	{ name: 'rag_querys', method: 'functionCalling' },
 )
 
 const QUERY_REWRITE_PROMPT = `你是试剂库 RAG 的查询改写模块，把用户问题转成向量库的检索查询。只做改写，不回答问题。
@@ -87,127 +157,141 @@ const QUERY_REWRITE_PROMPT = `你是试剂库 RAG 的查询改写模块，把用
 const getQuerys: GraphNode<typeof AgentState.State> = async (state) => {
 	const question = state.question.trim()
 	if (!question) return { querys: [], llmCalls: 0 }
-
 	try {
 		const { querys } = await queryRewriter.invoke([
 			new SystemMessage(QUERY_REWRITE_PROMPT),
 			new HumanMessage(question),
 		])
-		// 兜底清洗：模型偶尔吐空白串
 		const cleaned = querys.map((q) => q.trim()).filter(Boolean)
 		return { querys: cleaned.length ? cleaned : [question], llmCalls: 1 }
 	} catch (e) {
-		// 旁路化降级：改写服务挂了不杀对话，拿原问题直检（召回差一点，但链路活着）
+		// 旁路化降级：改写服务挂了不杀对话，拿原问题直检
 		console.warn('[getQuerys] 改写失败，降级为原问题查询:', (e as Error).message)
 		return { querys: [question], llmCalls: 1 }
 	}
 }
 
-// ══ 节点：ragNode —— 每条查询 稠密(searchDoc) + 稀疏(searchSparse) 双路并发 → RRF(k=60) 融合 ══
-// 检索编排收口在这一层：embed/ 只管稠密、sparse/ 只管稀疏，本节点是唯一同时碰两路的地方
-const RRF_K = 60        // 论文正统常数：平滑头名差距，防止单路把榜首包场
-const ROUTE_LIMIT = 10  // 每路各捞几条（RRF 吃的是名次，给后面的人留点候选）
-
+// ══ 节点：rag —— 每条查询走 rag/search.ts 的混合检索（named dense+sparse 双路已在内层 RRF），跨查询再做一次 RRF ══
+// 9/6 变更：原直连 embed/ollama.ts + sparse/bm25.ts 的 demo 集合（sds_embed_demo），
+//           现统一走 hybridSearch(config.QDRANT_COLLECTION)——读写同库，生产口径
+const RRF_K = 60
 const ragNode: GraphNode<typeof AgentState.State> = async (state) => {
-	const querys = state.querys.filter(q => q.trim())
+	const querys = state.querys.filter((q) => q.trim())
 	if (!querys.length) return { RAGcontents: [] }
 
-	// ① 2N 路同时发：每条查询 ×（稠密路 + 稀疏路）；一路挂只丢一路，其余照要
-	const routes = await Promise.all(
-		querys.flatMap(q => [
-			searchDoc(q, ROUTE_LIMIT).catch(e => {
-				console.warn('[ragNode] 稠密路失败，忽略:', (e as Error).message)
-				return [] as Retrieved[]
+	const lists = await Promise.all(
+		querys.map((q) =>
+			hybridSearch(q, { top: 8 }).catch((e) => {
+				console.warn('[ragNode] 单条查询混合检索失败，忽略:', (e as Error).message)
+				return [] as Awaited<ReturnType<typeof hybridSearch>>
 			}),
-			searchSparse(q, ROUTE_LIMIT).catch(e => {
-				console.warn('[ragNode] 稀疏路失败，忽略:', (e as Error).message)
-				return [] as Retrieved[]
-			}),
-		]),
+		),
 	)
 
-	// ② RRF：score(text) = Σ 各路 1/(k + 名次) —— 只用名次不用分数（余弦和 BM25×IDF 量纲本就不通）
-	//    searchDoc/searchSparse 返回即按名次排好，rank = index + 1；两函数不回传 id，用 text 原文当合并键
+	// 跨查询融合：只用名次（各路量纲不通）；合并键 = chunk 原文
 	const rrf = new Map<string, number>()
-	const itemOf = new Map<string, Retrieved>()
-	for (const list of routes)
+	const itemOf = new Map<string, (typeof lists)[number][number]>()
+	for (const list of lists)
 		for (let i = 0; i < list.length; i++) {
 			const hit = list[i]!
-			rrf.set(hit.text, (rrf.get(hit.text) ?? 0) + 1 / (RRF_K + i + 1))
-			if (!itemOf.has(hit.text)) itemOf.set(hit.text, hit)
+			const key = String(hit.text ?? '')
+			if (!key) continue
+			rrf.set(key, (rrf.get(key) ?? 0) + 1 / (RRF_K + i + 1))
+			if (!itemOf.has(key)) itemOf.set(key, hit)
 		}
 
-	// ③ 融合分降序取 top8，分节/出处拼成语境锚喂下游生成
+	// 融合分降序取 top3 喂生成（再多 getResult 也有 6000 字符封顶，宁缺毋滥）
 	const RAGcontents = [...rrf.entries()]
 		.sort((a, b) => b[1] - a[1])
 		.slice(0, 3)
-		.map(([text]) => {
-			const item = itemOf.get(text)!
-			return `【${(item.section as string) ?? '未分节'}｜${(item.source_doc as string) ?? '?'}】${text}`
+		.map(([key]) => {
+			const item = itemOf.get(key)!
+			return `【${(item.section as string) ?? '未分节'}｜${(item.source_doc as string) ?? '?'}】${key}`
 		})
 	return { RAGcontents }
 }
 
-// ══ 节点：getResult —— question + 检索素材 → 生成回答（链尾，答案写进 messages）══
+// ══ 节点：web —— 联网兜底（只接"本地路空手"的，正常问题不花这个钱）══
+const webNode: GraphNode<typeof AgentState.State> = async (state) => {
+	const webResult = await webSearchRun(state.question.trim() || state.querys[0] || '')
+	return { webResult }
+}
+
+// ══ 节点：result —— 三来源素材 + question → 流式生成回答（链尾，答案写进 messages）══
 const answerModel = new ChatOpenAI({
 	model: config.LLM_MODEL,
 	apiKey: config.LLM_API_KEY,
 	configuration: { baseURL: config.LLM_BASE_URL },
+	streaming: true, // 真流式：/agent/runs/stream 靠它吐 AIMessageChunk，Chat 端逐字上屏
 })
 
-const ANSWER_PROMPT = `你是实验室试剂管理助手，依据下方"检索素材"回答用户问题。
+const ANSWER_PROMPT = `你是实验室试剂管理助手，依据下方"素材"回答用户问题。
 规则：
-1. 只依据素材作答；闪点、浓度、禁配物、急救步骤这类安全数据严禁用模型常识编造或补全
-2. 引用素材时点名出处，如"据《硫酸SDS·消防措施》"
-3. 素材为空或与问题相关性不足：直说"本地试剂库未检索到相关内容"，建议换关键词重试或查阅纸质 SDS，不要硬答
-4. 中文、简洁，关键安全信息用列表`
+1. 闪点、浓度、禁配物、急救步骤这类安全数据严禁用模型常识编造或补全，只能引自素材
+2. 溯源口径：本地文档库素材点名出处（如"据《硫酸SDS·消防措施》"）；台账数据如实报数值与位置；
+   联网素材一旦引用必须注明"（来自联网搜索，未经本地库核实）"
+3. 素材为空或与问题相关性不足：直说"未检索到相关内容"，并建议换关键词或先在知识库页上传对应文档，不要硬答
+4. 纯寒暄（问题不涉及数据）正常自然回应即可
+5. 中文、简洁，关键安全信息用列表`
 
-const getResult: GraphNode<typeof AgentState.State> = async (state) => {
-	const ragContents = state.RAGcontents
-	const querys = state.querys
-	const question = state.question
+const resultNode: GraphNode<typeof AgentState.State> = async (state) => {
+	const { question, RAGcontents, dbResult, webResult, route } = state
 
-	// 素材截断：8 条 chunk 不控字数会撑爆上下文，切 6000 字符封顶
-	const material = ragContents.length
-		? ragContents.join('\n---\n').slice(0, 6000)
-		: '(本轮未检索到任何素材)'
+	// 三来源拼装；db 的"没查到"不进素材（免得 LLM 对着报错文本编故事）
+	const parts: string[] = []
+	if (RAGcontents.length) parts.push(`## 本地文档库素材（混合检索，RRF 融合排序）\n${RAGcontents.join('\n---\n').slice(0, 6000)}`)
+	if (!dbMiss(dbResult)) parts.push(`## 试剂台账查询结果（MySQL 实时数据）\n${dbResult.slice(0, 2500)}`)
+	if (webResult) parts.push(`## 联网搜索结果（⚠️未经本地库核实）\n${webResult.slice(0, 4000)}`)
+	const material = parts.join('\n\n') || '(本轮无任何素材)'
 
 	try {
 		const res = await answerModel.invoke([
 			new SystemMessage(
-				`${ANSWER_PROMPT}\n\n## 检索素材（RRF 融合排序 top${ragContents.length}，【分节｜出处】为锚）\n${material}` +
-				`\n\n## 本轮实际使用的检索查询\n${querys.join(' / ') || '(无)'} —— 仅供你判断检索角度是否跑偏，不必复述`,
+				`${ANSWER_PROMPT}\n\n${material}` +
+				(route === 'chat' ? '\n\n提示：本轮被分流为闲聊（chat），若无素材按规则 4 处理。' : '') +
+				`\n\n## 本轮实际使用的检索查询\n${state.querys.join(' / ') || '(无)'} —— 仅供你判断检索角度是否跑偏，不必复述`,
 			),
-			// 短期记忆：把窗口内历史对话原样带上（messages channel 已被 reducer 截到 20 条）
-			// 多轮指代（"刚才那个酸"）全靠这一行接住
+			// 短期记忆：窗口内历史原样带上，多轮指代（"刚才那个酸"）靠这一行接住
 			...state.messages,
 			new HumanMessage(question),
 		])
-		return { messages: [res], llmCalls: 1 }
+		// 用户这句也写回 messages channel —— 线程记忆里才有来龙去脉（之前只进 AI 的话，历史是独白）
+		const stamped: BaseMessage[] = question ? [new HumanMessage(question), res] : [res]
+		return { messages: stamped, llmCalls: 1 }
 	} catch (e) {
 		// 链尾也旁路化：生成挂了至少回一句人话，不给前端留黑洞
-		console.warn('[getResult] 回答生成失败:', (e as Error).message)
+		console.warn('[result] 回答生成失败:', (e as Error).message)
 		return {
-			messages: [new AIMessage(`回答生成失败：${(e as Error).message.slice(0, 100)}（检查 LLM 服务后重试）`)],
+			messages: [
+				...(question ? [new HumanMessage(question)] : []),
+				new AIMessage(`回答生成失败：${(e as Error).message.slice(0, 100)}（检查 LLM 服务后重试）`),
+			],
 			llmCalls: 1,
 		}
 	}
 }
 
-// ══ 主图装配：START → getQuerys（改写查询）→ rag（双路检索+RRF）→ result（生成回答）→ END ══
-// checkpointer 两幅面孔：
-//   ▸ 生产 `bun run dev`（langgraph server）→ 服务端自带磁盘存档（.langgraph_api/）+ thread 管理，
-//     多用户持久化归它管，我们这个注入只在下面这种场景生效
-//   ▸ 脚本直调 graph.invoke（现在的冒烟路）→ MemorySaver 内存档：窗口/线程隔离语义一致，但重启不留存
-//     （想用磁盘版 bun 直调：node 跑 or 等 bun 修 better-sqlite3，包已装着没删）
+// ══ 主图装配 ══
+// checkpointer 两幅面孔（同 9/5 注释）：
+//   ▸ 脚本直调 graph.invoke/stream → 下面的 MemorySaver 内存档（重启即清空，正好符合"退出就清空"的临时会话定位）
+//   ▸ 若将来上 langgraph server：服务端自带存档 + thread 管理，本注入只在脚本场景生效
 export const checkpointer = new MemorySaver()
 
 export const graph = new StateGraph(AgentState)
-	.addNode("getQuerys",getQuerys)
-	.addNode("rag",ragNode)
-	.addNode("result",getResult)
-	.addEdge(START,"getQuerys")
-	.addEdge("getQuerys","rag")
-	.addEdge("rag","result")
-	.addEdge("result",END)
-	.compile({ checkpointer });
+	.addNode('router', routerNode)
+	.addNode('dbQuery', dbQuery)
+	.addNode('getQuerys', getQuerys)
+	.addNode('rag', ragNode)
+	.addNode('web', webNode)
+	.addNode('result', resultNode)
+	.addEdge(START, 'router')
+	// 三选一的分发 + 两处"本地空手→联网"的确定性判空（全在代码，不劳 LLM）
+	// allowDb=false（演示通道）时 db 判定即使漏网也降级到 knowledge —— 与提示词隔离互为双保险
+	.addConditionalEdges('router', (s) =>
+		s.route === 'db' && s.allowDb !== false ? 'dbQuery' : s.route === 'chat' ? 'result' : 'getQuerys')
+	.addConditionalEdges('dbQuery', (s) => (dbMiss(s.dbResult) && s.allowWeb !== false ? 'web' : 'result'))
+	.addEdge('getQuerys', 'rag')
+	.addConditionalEdges('rag', (s) => (s.RAGcontents.length ? 'result' : s.allowWeb !== false ? 'web' : 'result'))
+	.addEdge('web', 'result')
+	.addEdge('result', END)
+	.compile({ checkpointer })
