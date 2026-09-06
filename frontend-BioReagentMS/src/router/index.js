@@ -10,6 +10,14 @@ const router = createRouter({
       meta: { title: '登录', noAuth: true },
     },
     {
+      // 免登录演示通道：只走知识库+闲聊两路（后端 mode=public 关台账+限流），独立无侧栏布局
+      path: '/assistant',
+      name: 'Assistant',
+      component: () => import('@/views/Chat.vue'),
+      props: { publicMode: true },
+      meta: { title: '实验室助手（免登录体验）', noAuth: true },
+    },
+    {
       path: '/',
       component: () => import('@/layout/MainLayout.vue'),
       redirect: '/dashboard',
@@ -93,6 +101,12 @@ const router = createRouter({
           meta: { title: '智能助手', icon: 'ChatDotRound' },
         },
         {
+          path: 'knowledge',
+          name: 'Knowledge',
+          component: () => import('@/views/Knowledge.vue'),
+          meta: { title: '知识库', icon: 'Notebook' },
+        },
+        {
           path: 'web-search',
           name: 'WebSearch',
           component: () => import('@/views/WebSearch.vue'),
@@ -113,7 +127,8 @@ router.beforeEach((to) => {
   // 过滤掉 "undefined" / "null" 字符串（localStorage 可能存了异常值）
   const validToken = token && token !== 'undefined' && token !== 'null' ? token : null
   if (to.meta.noAuth) {
-    return validToken ? '/dashboard' : undefined
+    // 已登录撞登录页 → 回工作台；免登录体验页（/assistant）任何人可进，不赶
+    return to.name === 'Login' && validToken ? '/dashboard' : undefined
   }
   return validToken ? undefined : '/login'
 })

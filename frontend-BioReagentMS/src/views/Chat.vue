@@ -3,15 +3,43 @@ import { ref, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
 
+// publicMode=true：/assistant 免登录演示通道（路由 props 注入）
+//   后端按 mode 关台账路+限流；前端换一套 pub_* 临时档，与管理版会话互不串台
+const props = defineProps({
+  publicMode: { type: Boolean, default: false },
+})
+const NS = props.publicMode ? 'pub_' : ''
+
+// ── 临时会话（9/6 拍板）：聊天内容只在本次登录内保留 ──
+// 历史+线程键放 sessionStorage（关标签页/退出即失效），登出时 auth.logout() 负责清 chat_*
+// 服务端 MemorySaver 同为内存档：进程重启 = 上下文归零，两端生命周期天然一致
+const HIST_KEY = NS + 'chat_hist'
+const THREAD_KEY = NS + 'chat_thread'
+const newThread = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}${Math.random().toString(16).slice(2)}`)
+
 const messages = ref([])
+try {
+  const raw = sessionStorage.getItem(HIST_KEY)
+  if (raw) messages.value = JSON.parse(raw) // 刷新页面历史还在（会话未退出）
+} catch { /* 坏档直接当空会话 */ }
+if (!sessionStorage.getItem(THREAD_KEY)) sessionStorage.setItem(THREAD_KEY, newThread())
+const threadId = ref(sessionStorage.getItem(THREAD_KEY))
+
+// 只存纯文本轮（图片等富对象不进临时档），失败不炸聊天
+function persist() {
+  try {
+    sessionStorage.setItem(HIST_KEY, JSON.stringify(messages.value.map((m) => ({ role: m.role, content: m.content }))))
+  } catch { /* 存储满之类，忽略 */ }
+}
+
+const inputText = ref('')
+const loading = ref(false)
+const chatBox = ref(null)
 
 function md(text) {
   if (!text) return ''
   return marked(text, { breaks: true })
 }
-const inputText = ref('')
-const loading = ref(false)
-const chatBox = ref(null)
 
 async function scrollBottom() {
   await nextTick()
@@ -31,22 +59,21 @@ async function send() {
   const aiMsg = { role: 'assistant', content: '' }
   messages.value.push(aiMsg)
   loading.value = true
+  persist()
 
   try {
+    // 协议：Hono /agent/runs/stream 自写最小子集（见 tsAgent src/service/routes/stream.ts）
+    // 只发本轮 question —— 多轮上下文靠服务端 thread_id 记忆，不再整段历史重放（旧 py 时代的姿势）
     const response = await fetch('/agent/runs/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         assistant_id: 'reagent_assistant',
-        input: {
-          messages: messages.value
-            .filter(m => m.content)
-            .map(m => ({ role: m.role, content: m.content })),
-        },
-        stream_mode: 'messages',
+        mode: props.publicMode ? 'public' : 'authed',
+        input: { question: text },
+        config: { configurable: { thread_id: threadId.value } },
       }),
     })
-
     if (!response.ok) {
       throw new Error(`Agent 服务错误: ${response.status}`)
     }
@@ -60,65 +87,42 @@ async function send() {
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
-
-      // 兼容 SSE 和 ndjson 两种格式
-      let events = buffer.split('\n\n')
+      // SSE 事件按空行切；残包留 buffer 下轮拼
+      const events = buffer.split('\n\n')
       buffer = events.pop()
 
-      // 无双换行 → 回退单行 ndjson
-      if (events.length === 0) {
-        const lines = buffer.split('\n')
-        buffer = lines.pop()
-        events = lines
-      }
-
       for (const raw of events) {
-        if (!raw.trim()) continue
-
-        // 提取 JSON: 匹配 data: 前缀，否则整行当 JSON
-        let jsonStr = raw
         const m = raw.match(/^data:\s?(.+)$/m)
-        if (m) jsonStr = m[1]
-
+        if (!m) continue
         try {
-          const c = extractContent(JSON.parse(jsonStr))
-          if (c) {
-            aiMsg.content = c             
-            await nextTick()
-            scrollBottom()
-          }
-        } catch { /* skip */ }
+          onEvent(JSON.parse(m[1]), aiMsg)
+          await scrollBottom() // 逐 token 跟手
+        } catch { /* 半截 JSON 等下一包 */ }
       }
     }
   } catch (e) {
-    aiMsg.content = `请求失败: ${e.message}`
+    aiMsg.content = aiMsg.content || `请求失败: ${e.message}`
     ElMessage.error('智能体请求失败')
   } finally {
     loading.value = false
+    persist()
     await scrollBottom()
   }
 }
 
-// 从 LangGraph 消息数组中取最后一条 AI 消息（chunk 是累积的完整消息列表）
-function extractContent(chunk) {
-  if (!chunk || typeof chunk !== 'object') return ''
+// 事件分发：ai_chunk 增量上屏 / error 追加人话 / done 收工
+function onEvent(evt, aiMsg) {
+  if (!evt || typeof evt !== 'object') return
+  if (evt.type === 'ai_chunk') aiMsg.content += evt.text ?? ''
+  else if (evt.type === 'error') aiMsg.content += `\n⚠️ ${evt.message || '服务端异常'}`
+}
 
-  if (Array.isArray(chunk)) {
-    for (let i = chunk.length - 1; i >= 0; i--) {
-      const item = chunk[i]
-      if (item.type === 'ai' || item.type === 'AIMessageChunk') {
-        if (typeof item.content === 'string') return item.content
-        if (Array.isArray(item.content)) {
-          return item.content.map(c => c.text || '').join('')
-        }
-      }
-    }
-    return ''
-  }
-  if (chunk.content && (chunk.type === 'ai' || chunk.type === 'AIMessageChunk')) {
-    return typeof chunk.content === 'string' ? chunk.content : ''
-  }
-  return ''
+// 新会话：换线程键 + 清临时档（服务端旧线程自然弃坑，窗口记忆随 MEMORY_WINDOW 走）
+function newChat() {
+  messages.value = []
+  threadId.value = newThread()
+  sessionStorage.setItem(THREAD_KEY, threadId.value)
+  sessionStorage.removeItem(HIST_KEY)
 }
 
 function onKeydown(e) {
@@ -130,11 +134,20 @@ function onKeydown(e) {
 </script>
 
 <template>
-  <div class="chat-container">
+  <div class="chat-container" :class="{ public: publicMode }">
+    <div v-if="publicMode" class="public-banner">
+      <span class="pb-title">BioReagentMS · 实验室助手免登录体验</span>
+      <span class="pb-note">可问化学品 SDS / 安全处置等文档问题；库存台账等内部数据需登录后查看</span>
+    </div>
+    <div class="chat-toolbar">
+      <span class="toolbar-hint">{{ publicMode ? '体验记录仅本浏览器会话内保留' : '对话记录仅本次登录内保留，退出即清空' }}</span>
+      <el-button size="small" :disabled="loading || !messages.length" @click="newChat">新会话</el-button>
+    </div>
     <div ref="chatBox" class="chat-box">
       <div v-if="messages.length === 0" class="chat-empty">
         <el-icon :size="48" color="#c0c4cc"><ChatDotRound /></el-icon>
-        <p>你好，我是实验室助手。可以问我试剂信息、库存情况、预警记录等问题。</p>
+        <p v-if="publicMode">你好，我是化学品安全演示助手。试试问"丙酮着火了怎么办"或"氯化钠的储存要求"。</p>
+        <p v-else>你好，我是实验室助手。可以问我试剂信息、库存情况、预警记录等问题。</p>
       </div>
 
       <div
@@ -182,6 +195,39 @@ function onKeydown(e) {
   max-width: 900px;
   margin: 0 auto;
 }
+/* 免登录体验页：不在 MainLayout 里，占满全屏自己当布局 */
+.chat-container.public {
+  height: 100vh;
+  max-width: 860px;
+  padding: 0 20px;
+}
+.public-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 14px 0 4px;
+}
+.pb-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+.pb-note {
+  font-size: 12px;
+  color: #909399;
+}
+.chat-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+.toolbar-hint {
+  font-size: 12px;
+  color: #909399;
+}
 
 .chat-box {
   flex: 1;
@@ -198,7 +244,6 @@ function onKeydown(e) {
   color: #909399;
   gap: 12px;
 }
-
 .chat-empty p {
   font-size: 14px;
 }

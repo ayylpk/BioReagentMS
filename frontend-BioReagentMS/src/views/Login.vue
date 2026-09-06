@@ -92,6 +92,10 @@ async function handleLogin() {
             </el-button>
           </el-form-item>
         </el-form>
+
+        <div class="login-extra">
+          <router-link to="/assistant" class="assistant-link">免登录体验化学品助手 →</router-link>
+        </div>
       </div>
     </div>
   </div>
@@ -194,5 +198,18 @@ async function handleLogin() {
 .login-btn {
   width: 100%;
   margin-top: 8px;
+}
+
+.login-extra {
+  text-align: center;
+  margin-top: 12px;
+}
+.assistant-link {
+  font-size: 13px;
+  color: #409eff;
+  text-decoration: none;
+}
+.assistant-link:hover {
+  text-decoration: underline;
 }
 </style>

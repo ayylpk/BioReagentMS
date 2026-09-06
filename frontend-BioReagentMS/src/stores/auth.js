@@ -53,6 +53,11 @@ export const useAuthStore = defineStore('auth', () => {
     userInfo.value = null
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
+    // 聊天临时会话随登出清空（Chat.vue 历史/线程键存 sessionStorage：管理版 chat_* + 体验版 pub_chat_*）
+    sessionStorage.removeItem('chat_hist')
+    sessionStorage.removeItem('chat_thread')
+    sessionStorage.removeItem('pub_chat_hist')
+    sessionStorage.removeItem('pub_chat_thread')
   }
 
   // 获取当前用户信息（token 有效时刷新）

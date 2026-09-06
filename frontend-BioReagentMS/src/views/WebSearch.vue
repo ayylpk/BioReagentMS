@@ -88,23 +88,28 @@ const confirming = ref(null)  // 正在确认的行 id
 async function handleConfirm(row) {
   try {
     await ElMessageBox.confirm(
-      `确定将「${row.reagentName}」的检索内容存入 Chroma 知识库吗？`,
+      `确定将「${row.reagentName}」的检索内容存入知识库（Qdrant）吗？`,
       '确认存入',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'info' },
     )
     confirming.value = row.id
-    // 1. 存入 Chroma
-    await axios.post('/search/webSearch/confirm', {
+    // 1. 入库：Hono /webSearch/confirm（走 /search 代理，剥前缀后正好对上；旧 py 同款路径）
+    const res = await axios.post('/search/webSearch/confirm', {
       reagent_name: row.reagentName,
       cas_number: row.casNumber || '',
       content: row.content,
     })
-    // 2. 从 MySQL 删除
-    await axios.delete(`/search/webSearch/${row.id}`)
-    ElMessage.success('已存入知识库')
+    if (!res.data?.ok) {
+      // 非 done（待人审/隔离/失败）：暂存行保留，把 flags 头一条给用户看原因
+      ElMessage.warning(`未入库（${res.data?.status || '未知状态'}）：${(res.data?.flags || []).join('；') || '见台账'}`)
+      return
+    }
+    // 2. 入库成功才删暂存（暂存表归 Java 管，删除走 /api）
+    await request.delete(`/webSearch/${row.id}`)
+    ElMessage.success(`已存入知识库（${res.data.chunks} 个切片）`)
     loadList()
   } catch {
-    // 取消或失败
+    // 取消或失败（拦截器已弹错）
   } finally {
     confirming.value = null
   }

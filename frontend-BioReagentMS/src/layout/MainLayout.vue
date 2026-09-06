@@ -23,6 +23,7 @@ const allMenuItems = [
   { path: '/operations', title: '操作日志', icon: 'Document', roles: [0] },
   { path: '/users', title: '用户管理', icon: 'User', roles: [0] },
   { path: '/chat', title: '智能助手', icon: 'ChatDotRound', roles: [0, 1, 2, 3, 4] },
+  { path: '/knowledge', title: '知识库', icon: 'Notebook', roles: [0] },
   { path: '/web-search', title: '联网检索', icon: 'Search', roles: [0] },
 ];
 

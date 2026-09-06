@@ -24,14 +24,18 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/agent': {
-        target: 'http://localhost:2024',
+        target: 'http://localhost:8123',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/agent/, ''),
       },
       '/search': {
         target: 'http://localhost:8123',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/search/, ''),
+      },
+      // 摄取 API（tsAgent Hono :8123 的 /ingest 路由，路径前后端一致不用 rewrite）
+      '/ingest': {
+        target: 'http://localhost:8123',
+        changeOrigin: true,
       },
     },
   },
