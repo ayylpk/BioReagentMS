@@ -51,3 +51,6 @@ qdrant-data/
 # Build
 build/
 out/
+
+# 上传摄取的语料落盘目录（知识库页/重摄共用，不进仓库）
+tsAgent/corpus/
