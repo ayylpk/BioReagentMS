@@ -2,10 +2,12 @@
 // 分工线：embed/、sparse/ 只管自己模态的向量算法；"一条 chunk 同时长两种向量"的组合只发生在这层
 // 读侧提醒：生产 collection 的稠密字段是 named "dense"——ragNode/searchDoc 接入真库那天加 using:'dense'
 import { QdrantClient } from '@qdrant/js-client-rest'
+import { createHash } from 'node:crypto'
 import { config } from '../../config/env'
 import { embed } from '../embed' // 门面选择后端（EMBED_BACKEND），写读永远同模
 import { toSparse } from '../sparse/bm25'
 import { pool } from '../../db/mysql'
+import { SCHEMA_VERSION } from '../inspect/profile'
 import type { Chunk, DocProfile } from '../inspect/profile'
 
 // 台账表（接线日跑一次；logIngest 对缺表只 warn，旁路化）：
@@ -18,15 +20,32 @@ const qdrant = new QdrantClient({ url: config.QDRANT_URL, apiKey: config.QDRANT_
 const COLL = config.QDRANT_COLLECTION
 const EMBED_BATCH = 32 // v4/bge 批量上限内取稳；Ollama 不限但内存友好
 
-/** 确定性 point id：hash(doc_id#seq) → 同文档重跑幂等覆盖，增量按 doc_id 删旧插新 */
-export function pointId(docId: string, seq: number): number {
-	let h = 0x811c9dc5 // FNV-1a，与 bm25 同款（用途不同：那边是词表编号，这边是主键）
-	for (const c of `${docId}#${seq}`) {
-		h ^= c.codePointAt(0)!
-		h = Math.imul(h, 0x01000193)
-	}
-	return h >>> 0
+/** point id 命名空间：本工程私有固定值，一旦上线永不变（变了=全库 id 漂移） */
+const POINT_NS = '9f2c4b1e-6d3a-4f7b-8c05-1a2b3c4d5e6f'
+
+/**
+ * 确定性 point id：RFC4122-v5 风格的命名空间 UUID（SHA-1(namespace ‖ `${docId}#${seq}`)）。
+ * 旧方案是 32 位 FNV-1a 数字：1710+ 文档 × 每档几十块 ≈ 10⁵ 点，按生日问题期望碰撞数 ≈ n²/2^33 ≈ 1.2，
+ * —— 即"必然有若干条 chunk 被别条静默覆盖"，且覆盖后不报错、只少数据（最贵的那种 bug）。
+ * 新方案取 SHA-1 前 128 位（122 位有效随机），10⁵ 量级碰撞概率 ≈ 10⁻²⁷，可当不存在。
+ * 纯函数、无 IO、可单测；同 docId+seq 任何时候算出同一个 id（重摄幂等的前提）。
+ */
+export function pointId(docId: string, seq: number): string {
+	const h = createHash('sha1')
+	h.update(Buffer.from(POINT_NS.replace(/-/g, ''), 'hex')) // 16 字节命名空间
+	h.update(`${docId}#${seq}`, 'utf8')
+	const b = h.digest()
+	b[6] = (b[6]! & 0x0f) | 0x50 // version 5（name-based, SHA-1）
+	b[8] = (b[8]! & 0x3f) | 0x80 // RFC4122 variant
+	const hex = b.subarray(0, 16).toString('hex')
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
 }
+
+/** 需要 payload index 的字段（新增字段必须登记在这里，否则 filter 走全表扫） */
+const PAYLOAD_INDEXES: readonly (readonly [string, 'keyword' | 'integer'])[] = [
+	['section', 'keyword'], ['sections', 'keyword'], ['cas_number', 'keyword'], ['doc_id', 'keyword'],
+	['heading_path', 'keyword'], ['table_id', 'keyword'], // heading_path/sections 是数组，keyword index 会逐元素索引
+]
 
 let collectionReady = false
 async function ensureCollection(): Promise<void> {
@@ -37,17 +56,36 @@ async function ensureCollection(): Promise<void> {
 		vectors: { dense: { size: config.EMBED_DIM, distance: 'Dot' } },
 		sparse_vectors: { sparse: { modifier: 'idf' } }, // IDF 服务端统计，写入只管交 tf
 	})
-	await qdrant.createPayloadIndex(COLL, { field_name: 'section', field_schema: 'keyword' })
-	await qdrant.createPayloadIndex(COLL, { field_name: 'cas_number', field_schema: 'keyword' })
-	await qdrant.createPayloadIndex(COLL, { field_name: 'doc_id', field_schema: 'keyword' })
 	collectionReady = true
+}
+
+let indexesReady = false
+/**
+ * payload index 的幂等兜底（已在线上跑的集合不会因为"建集合时加过"而自动补索引）：
+ * createPayloadIndex 对已存在的索引是 no-op，真报错也只 warn —— 索引缺失只影响过滤性能，
+ * 绝不能挡住写入主流程。进程内只跑一次。
+ */
+async function ensurePayloadIndex(): Promise<void> {
+	if (indexesReady) return
+	for (const [field_name, field_schema] of PAYLOAD_INDEXES) {
+		try {
+			await qdrant.createPayloadIndex(COLL, { field_name, field_schema, wait: true })
+		} catch (e) {
+			console.warn(`[store] payload index 跳过 ${field_name}:`, (e as Error).message.slice(0, 120))
+		}
+	}
+	indexesReady = true
 }
 
 /** 把一个文档的全部 chunk 写入向量库（先删同 doc_id 旧版本 = 增量重建不全库） */
 export async function upsertChunks(profile: DocProfile, chunks: Chunk[]): Promise<void> {
 	if (!chunks.length) return
 	await ensureCollection()
+	await ensurePayloadIndex()
 	const docId = chunks[0]!.docId
+	// 前置删除走 payload.doc_id filter（不按 point id）——所以 point id 从 32 位数字换成 UUID 后，
+	// 库里残留的"旧数字 id 点"照样被这一刀按 doc_id 清干净，重摄幂等不受影响。
+	// ⚠️ 全库只有这一处 + deleteDoc 两处删除；谁都不许改成按 id 删（id 会随方案演进，doc_id 才是身份）
 	await qdrant.delete(COLL, { filter: { must: [{ key: 'doc_id', match: { value: docId } }] }, wait: true })
 
 	const sourceDoc = profile.file.replace(/^.*[\\/]/, '')
@@ -57,15 +95,27 @@ export async function upsertChunks(profile: DocProfile, chunks: Chunk[]): Promis
 		const points = batch.map((c, j) => ({
 			id: pointId(c.docId, c.seq),
 			vector: { dense: dense[j]!, sparse: toSparse(c.text) },
+			// payload 只增不删：老字段（doc_id/source_doc/section/cas_number/page/bbox/text/summary）语义不动，
+			// 下游 src/tools/searchKnowledge.ts 与 src/agent/graph.ts 仍按 section 读"叶子分节名"
 			payload: {
 				doc_id: c.docId,
 				source_doc: sourceDoc,
 				section: c.section ?? null,
-				cas_number: c.text.match(/\d{2,7}-\d{2}-\d/)?.[0] ?? null, // 锚前缀里就带着
+				sections: c.sections ?? (c.section ? [c.section] : null), // 覆盖到的叶子节名（跨节打包时 >1 个）
+				heading_path: c.headingPath, // 完整标题路径（数组）
+				seq: c.seq,
+				cas_number: c.text.match(/(?<![\d-])\d{2,7}-\d{2}-\d(?![\d-])/)?.[0] ?? null, // 锚前缀里就带着；边界防 R/S 码串扰（同 gate）
 				page: c.page ?? null,
 				bbox: c.bbox ?? null,
 				text: c.text,
+				table_id: c.tableId ?? null,
+				table_part: c.tablePart ? `${c.tablePart.index}/${c.tablePart.total}` : null,
+				// 切缝上下文长度：本块头部有多少字是上一块的尾巴（10% 重叠）。正文里没有标记，
+				// 展示/评估要裁掉重复就得靠这个数（二期：渲染层据此裁剪）
+				overlap_chars: c.overlapChars ?? 0,
+				schema_version: SCHEMA_VERSION, // 供下游识别"这条点属哪一代字段契约"
 				...(c.summary ? { summary: c.summary } : {}),
+				...(c.flags?.length ? { chunk_flags: c.flags } : {}),
 			},
 		}))
 		await qdrant.upsert(COLL, { wait: true, points })

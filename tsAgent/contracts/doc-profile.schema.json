@@ -6,8 +6,13 @@
   "required": ["file", "family", "strategy"],
   "properties": {
     "file": { "type": "string", "description": "绝对路径" },
-    "family": { "enum": ["docx", "xlsx", "pdf", "image", "text", "legacy-doc", "unknown"] },
-    "magic": { "type": "string", "description": "魔数判定实际格式：zip-ooxml / ole2 / pdf / png / jpeg ..." },
+    "family": { "enum": ["docx", "xlsx", "pdf", "pptx", "html", "odf", "rtf", "image", "text", "legacy-doc", "convert-required", "unknown"] },
+    "magic": { "type": "string", "description": "魔数判定实际格式：zip-ooxml / ole2 / pdf / png / jpeg ...；内容嗅探兜底时形如 text(首若干字节)" },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "前门发现但不足以改变策略的事实：后缀与内容不符、内容嗅探兜底、扩展名不认识等。进台账，人可见（不是 flags：不改判）"
+    },
     "docx": {
       "type": "object",
       "description": "结构探测（document.xml 数标签）——docx 是逻辑流，双栏不影响抽取顺序，只记录",
@@ -40,6 +45,30 @@
     "reason": { "type": "string", "description": "策略判定理由（日志与人审页面展示）" }
   },
   "$defs": {
+    "ParseDiag": {
+      "type": "object",
+      "description": "抽取侧诊断（parse.py stdout 的 diag 字段，TS 侧 src/rag/inspect/profile.ts 的 ParseDiag 同名字段）。只记事实不做判断；判断在 gate/quality.ts。字段名与 TS 侧逐字相同，别改名。",
+      "required": ["extractor", "chars"],
+      "properties": {
+        "extractor": { "type": "string", "description": "实际走通的抽取器：pymupdf4llm | pymupdf4llm+vl | markitdown | mammoth | html-parser | odf-xml | pptx-xml | rtf-strip | text | image-vl" },
+        "chars": { "type": "integer", "minimum": 0, "description": "抽出的正文字符数（gate 覆盖率断言的分子）" },
+        "pages_total": { "type": "integer", "minimum": 0 },
+        "pages_via_vl": { "type": "integer", "minimum": 0 },
+        "pages_vl_failed": { "type": "integer", "minimum": 0 },
+        "pages_skipped_by_cap": { "type": "integer", "minimum": 0, "description": "超 VL 页数上限被跳过的页（以前静默丢，现在必须记账）" },
+        "pages_empty": { "type": "integer", "minimum": 0 },
+        "images_total": { "type": "integer", "minimum": 0 },
+        "images_captioned": { "type": "integer", "minimum": 0 },
+        "captions_truncated": { "type": "integer", "minimum": 0 },
+        "captions_failed": { "type": "integer", "minimum": 0 },
+        "images_over_cap": { "type": "integer", "minimum": 0 },
+        "sheets_total": { "type": "integer", "minimum": 0 },
+        "sheets_rejected": { "type": "integer", "minimum": 0 },
+        "sheets_truncated": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
     "Blocks": {
       "type": "array",
       "description": "解析统一输出：任何格式任何路径，出口都是这个 block 数组",
@@ -54,6 +83,16 @@
           "markdown": { "type": "string", "description": "table: 简单表 md、合并单元格 html 表；image: ![一句描述](assets/xx)" },
           "html": { "type": "string", "description": "复杂表原文" }
         }
+      }
+    },
+    "PyPayload": {
+      "type": "object",
+      "description": "pytools/parse.py stdout 最后一行 JSON 的契约（src/rag/parse/fromPy.ts 校验）。diag 可缺省（老 py 兼容），但吐了就必须合 $defs.ParseDiag。",
+      "required": ["blocks"],
+      "properties": {
+        "blocks": { "$ref": "#/$defs/Blocks" },
+        "reject": { "type": ["string", "null"], "description": "非空 = 判定该文件不该进向量库（DocReject 出口，转人审）" },
+        "diag": { "$ref": "#/$defs/ParseDiag", "description": "抽取侧诊断：抽了多少字、走了哪条降级路、丢了多少页/多少图" }
       }
     }
   }

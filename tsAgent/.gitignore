@@ -39,6 +39,9 @@ resources/*
 !resources/.gitkeep
 samples/*
 !samples/README.md
+# 例外：解析泛化的回归靶子（9/15）—— 单个 ≤2KB，但 probe.test.ts 直接在读这些字节，
+# 不入库的话新克隆跑测试会红（"魔数/zip 深判/内容嗅探"只有真文件头才测得准）
+!samples/family-*
 # py 侧
 pytools/__pycache__/
 pytools/.venv/
