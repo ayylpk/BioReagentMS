@@ -1,0 +1,16 @@
+# backend 镜像构建上下文 = 仓库根。不清单的东西一律不进上下文：
+# 省时省流量（语料/dist 都是运行期卷挂载），更是隐私闸门——
+# .env 和 application-local.yml 一旦被 COPY 进 jar，密钥就烤死在镜像层里
+tsAgent/node_modules/
+tsAgent/corpus/
+tsAgent/data/
+tsAgent/resources/
+frontend-BioReagentMS/node_modules/
+backend-BioReagentMS/**/target/
+backend-BioReagentMS/**/.m2/
+**/application-local.yml
+**/.idea
+**/.vscode
+.env
+*.tar
+*.tar.gz

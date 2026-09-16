@@ -27,16 +27,15 @@ export default defineConfig({
         target: 'http://localhost:8123',
         changeOrigin: true,
       },
-      '/search': {
-        target: 'http://localhost:8123',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/search/, ''),
-      },
       // 摄取 API（tsAgent Hono :8123 的 /ingest 路由，路径前后端一致不用 rewrite）
       '/ingest': {
         target: 'http://localhost:8123',
         changeOrigin: true,
       },
+      // 两条人审 + 缺口知识（都是 tsAgent :8123；联网搜索 /search 代理已随该功能移除）
+      '/review': { target: 'http://localhost:8123', changeOrigin: true },
+      '/reaction': { target: 'http://localhost:8123', changeOrigin: true },
+      '/gap': { target: 'http://localhost:8123', changeOrigin: true },
     },
   },
 })

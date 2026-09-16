@@ -1,11 +1,13 @@
-// ═══ 主图装配：三路意图路由 + 本地未命中→联网兜底 ═══
+// ═══ 主图装配：四路意图路由 + 本地未命中 → 缺口问答（生成并进待办，不再联网） ═══
 // 分流铁律（code-over-tools）：路由/判空/降级这些确定性逻辑全由代码节点做，
-//   LLM 只干两件结构化的事——"一句话分类"（router）和"从白名单挑模板抽参"（dbQuery），不许它自由发挥
+//   LLM 只干三件结构化的事——"一句话分类"（router）、"从白名单挑模板抽参"（dbQuery/compatQuery）、
+//   以及"本地无依据时生成一段参考回答"（gapAnswer，**产出一律进待办表等人工确认，绝不直接入知识库**）
 // 流程：
 //   START → router ─ db ────────→ dbQuery ─(命中)──────────→ result
-//                        (空/失败)→ web ──┐
+//                                        (空)→ result（不编数字）
+//           START → router ─ reaction ──→ compatQuery ─────→ result
 //           START → router ─ knowledge → getQuerys → rag ─(有素材)→ result
-//                                        (空/未命中)→ web ──┤
+//                                                       (空)→ gapAnswer → result
 //           START → router ─ chat ─────────────────────────→ result
 import { StateGraph, START, END, Annotation, messagesStateReducer, MemorySaver, type GraphNode } from '@langchain/langgraph'
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages'
@@ -14,7 +16,8 @@ import { z } from 'zod'
 import { config } from '../config/env'
 import { hybridSearch } from '../rag/search'
 import { runTemplate, renderCatalog } from '../tools/dbTemplates'
-import { webSearchRun } from '../tools/webSearch'
+import { findCompatibility, renderCompat } from '../tools/reactionCompat'
+import { answerGap, renderGapMaterial } from '../tools/gapAnswer'
 
 // ── 会话层：短期记忆窗口 / 多用户线程键 ──
 const MEMORY_WINDOW = 20 // 短期记忆只留最近 20 条（≈10 轮问答），谁再往里塞都当场截
@@ -39,15 +42,16 @@ const AgentState = Annotation.Root({
 		reducer: (x, y) => messagesStateReducer(x, y).slice(-MEMORY_WINDOW),
 	}),
 	question: Annotation<string>({ default: () => '', reducer: (_x, y) => y }),
-	route: Annotation<'db' | 'knowledge' | 'chat'>({ default: () => 'knowledge', reducer: (_x, y) => y }),
+	route: Annotation<'db' | 'knowledge' | 'chat' | 'reaction'>({ default: () => 'knowledge', reducer: (_x, y) => y }),
 	// 免登录演示通道（/assistant）置 false：台账路整个关闭 —— 库存是实验室内部数据，匿名者只能碰公开文献
 	allowDb: Annotation<boolean>({ default: () => true, reducer: (_x, y) => y }),
-	// 演示通道的联网兜底走全局预算（stream 端点发放），预算用尽置 false：本地未命中就直接认怂，不烧 Tavily
-	allowWeb: Annotation<boolean>({ default: () => true, reducer: (_x, y) => y }),
 	querys: Annotation<string[]>({ default: () => [], reducer: (_x, y) => y }),
 	RAGcontents: Annotation<string[]>({ default: () => [], reducer: (_x, y) => y }),
 	dbResult: Annotation<string>({ default: () => '', reducer: (_x, y) => y }),
-	webResult: Annotation<string>({ default: () => '', reducer: (_x, y) => y }),
+	compatResult: Annotation<string>({ default: () => '', reducer: (_x, y) => y }),
+	/** 缺口问答：本地无依据时模型生成的参考回答（**同一份同时写进 MySQL 待办表**，等人工确认） */
+	gapResult: Annotation<string>({ default: () => '', reducer: (_x, y) => y }),
+	gapId: Annotation<number | null>({ default: () => null, reducer: (_x, y) => y }),
 	llmCalls: Annotation<number>({ default: () => 0, reducer: (x, y) => x + y }),
 })
 
@@ -59,25 +63,29 @@ const liteModel = () =>
 
 // ══ 节点：router —— 一句话定路（前置分流，别浪费向量检索的钱去答"你好"）══
 const routerModel = liteModel().withStructuredOutput(
-	z.object({ route: z.enum(['db', 'knowledge', 'chat']).describe('三选一的意图路由') }),
+	z.object({ route: z.enum(['db', 'knowledge', 'chat', 'reaction']).describe('四选一的意图路由') }),
 	{ name: 'route_pick', method: 'functionCalling' },
 )
 
-const ROUTE_PROMPT = `你是试剂库助手的前置分流器，把用户问题归为三类之一，只做分类，不回答。
+const ROUTE_PROMPT = `你是试剂库助手的前置分流器，把用户问题归为四类之一，只做分类，不回答。
 - db：问我们台账里的数字——库存数量/批次/存放位置/价格/效期/库存预警（能用 WHERE/GROUP BY 回答的）
 - knowledge：问文档内容——SDS 分节讲了什么（成分/危害/急救/消防/储存/废弃）、规章、SOP、仪器手册
+- reaction：问**两种物质放一起会不会出事**——能不能混放/混存、禁配、相容性、会不会反应、一起洒了怎么办
 - chat：寒暄、致谢、问你是谁这类不查数据的话
 判定倾向：出现"还有多少/放哪/哪个批次/快过期/低于安全线"→ db；出现"怎么办/什么危害/说明/要求"→ knowledge；
-多轮指代（"那它放哪"）要结合上文判断。拿不准 db 还是 knowledge 时选 knowledge（向量检索语义宽容，db 模板选错就全错）`
+  出现"能不能放一起/能不能混/禁配/相不相容/会不会反应"→ reaction（这条走已审核的禁配规则库，比向量检索精确）；
+  多轮指代（"那它放哪"）要结合上文判断。拿不准 db 还是 knowledge 时选 knowledge（向量检索语义宽容，db 模板选错就全错）`
 
 // 公开通道的分类器：db 类根本不在选项里 —— 与其"选了再拦"，不如"没得选"（提示词层面物理隔离）
-const ROUTE_PROMPT_PUBLIC = `你是试剂库演示助手的前置分流器，把用户问题归为两类之一，只做分类，不回答。
+// reaction 保留：禁配结论是公开化学安全知识（来自 SDS），不含库存数字；台账数字才是内部数据
+const ROUTE_PROMPT_PUBLIC = `你是试剂库演示助手的前置分流器，把用户问题归为三类之一，只做分类，不回答。
 - knowledge：问化学品的公开信息——SDS 分节讲了什么（成分/危害/急救/消防/储存/废弃）、实验规章、操作规范
+- reaction：问两种物质放一起会不会出事——能不能混放/混存、禁配、相容性、会不会反应
 - chat：寒暄、致谢、问你是谁，以及一切涉及"我们库存/台账数字"（还有多少/放哪/价格/效期）的问题——本演示通道没有内部台账权限，这类一律归 chat
 多轮指代要结合上文判断`
 
 const routerModelPublic = liteModel().withStructuredOutput(
-	z.object({ route: z.enum(['knowledge', 'chat']).describe('二选一（演示通道无台账权限）') }),
+	z.object({ route: z.enum(['knowledge', 'chat', 'reaction']).describe('三选一（演示通道无台账权限）') }),
 	{ name: 'route_pick_public', method: 'functionCalling' },
 )
 
@@ -95,7 +103,7 @@ const routerNode: GraphNode<typeof AgentState.State> = async (state) => {
 			new SystemMessage(allowDb ? ROUTE_PROMPT : ROUTE_PROMPT_PUBLIC),
 			new HumanMessage(`${history ? `上文：\n${history}\n\n` : ''}当前问题：${question}`),
 		])
-		return { route: route as 'db' | 'knowledge' | 'chat', llmCalls: 1 }
+		return { route: route as 'db' | 'knowledge' | 'chat' | 'reaction', llmCalls: 1 }
 	} catch (e) {
 		// 旁路化：分类挂了走 knowledge 主路（向量检索语义宽容，最差也是"未检索到"而不是死图）
 		console.warn('[router] 分流失败，默认 knowledge 路:', (e as Error).message)
@@ -138,6 +146,52 @@ const dbQuery: GraphNode<typeof AgentState.State> = async (state) => {
 
 /** runTemplate 的返回值哪些算"没查到"（决定要不要升联网兜底）——判空用字符串规则，确定性代码 */
 const dbMiss = (t: string) => !t || /结果为空|未知模板|缺必填|执行失败/.test(t)
+
+// ══ 节点：compatQuery —— 从问题里抽两个物质，然后**代码执行**禁配规则查询（与 dbQuery 同款：LLM 只抽参）══
+// 为什么不把 find_reaction_compatibility 直接丢给模型自由调用：抽参与执行分开，执行体才可测、可审计，
+//   而且这条路的安全性来自"执行体永不返回相容"（见 tools/reactionCompat.ts 的类型封死），不是来自提示词。
+const compatExtractor = liteModel().withStructuredOutput(
+	z.object({
+		subject: z.string().describe('第一种物质名称（原样取自问题，不要改写）'),
+		object: z.string().describe('第二种物质名称；问题里只有一种物质时填空串'),
+		subject_cas: z.string().describe('第一种物质的 CAS 号，问题里没给就填空串'),
+		object_cas: z.string().describe('第二种物质的 CAS 号，问题里没给就填空串'),
+	}),
+	{ name: 'compat_pick', method: 'functionCalling' },
+)
+
+const COMPAT_EXTRACT_PROMPT = `你是"物质相容性查询"的抽参模块：从用户问题里抽出**两个物质**，只抽参，不回答、不判断。
+规则：
+1. 名称原样提取（"浓硫酸"就写"浓硫酸"，不要改写成"硫酸"；俗称保留）
+2. 问题里给了 CAS 号就填进对应字段，没有就填空串 ""
+3. 问题里只有一种物质（比如只问"硫酸能不能和别的混"）→ object 填空串 ""
+4. 只输出字段，不要任何解释`
+
+const compatQuery: GraphNode<typeof AgentState.State> = async (state) => {
+	const question = state.question.trim()
+	if (!question) return { compatResult: '', llmCalls: 0 }
+	try {
+		const picked = await compatExtractor.invoke([
+			new SystemMessage(COMPAT_EXTRACT_PROMPT),
+			new HumanMessage(question),
+		])
+		const subject = picked.subject?.trim() ?? ''
+		const object = picked.object?.trim() ?? ''
+		if (!subject || !object) {
+			// 抽不出两个物质 = 不是一次可查的相容性问题：如实说，不猜也不硬答
+			return { compatResult: '【需补充信息】请说明具体是哪两种物质（例：硫酸与高锰酸钾能不能放在一起）。', llmCalls: 1 }
+		}
+		const finding = await findCompatibility(
+			{ name: subject, cas: picked.subject_cas?.trim() || null },
+			{ name: object, cas: picked.object_cas?.trim() || null },
+		)
+		return { compatResult: renderCompat(finding, subject, object), llmCalls: 1 }
+	} catch (e) {
+		// 旁路化：查询挂了不杀对话，如实说"查不了"，绝不让模型拿常识补一句"应该可以"
+		console.warn('[compatQuery] 相容性查询失败:', (e as Error).message)
+		return { compatResult: `【查询失败】相容性规则库暂时不可用（${(e as Error).message.slice(0, 80)}）。请人工核对 SDS 第 10 节，勿凭常识判断能否混放。`, llmCalls: 1 }
+	}
+}
 
 // ══ 节点：getQuerys —— question 改写为 RAG 检索查询（同 9/5 版）══
 const queryRewriter = liteModel().withStructuredOutput(
@@ -188,13 +242,13 @@ const ragNode: GraphNode<typeof AgentState.State> = async (state) => {
 		),
 	)
 
-	// 跨查询融合：只用名次（各路量纲不通）；合并键 = chunk 原文
+	// 跨查询融合：只用名次（各路量纲不通）；合并键 = point id（同 text 不同 point 不许并），doc_id#seq 兜底
 	const rrf = new Map<string, number>()
 	const itemOf = new Map<string, (typeof lists)[number][number]>()
 	for (const list of lists)
 		for (let i = 0; i < list.length; i++) {
 			const hit = list[i]!
-			const key = String(hit.text ?? '')
+			const key = hit.pointId || (hit.doc_id != null && hit.seq != null ? `${hit.doc_id}#${hit.seq}` : '')
 			if (!key) continue
 			rrf.set(key, (rrf.get(key) ?? 0) + 1 / (RRF_K + i + 1))
 			if (!itemOf.has(key)) itemOf.set(key, hit)
@@ -206,18 +260,25 @@ const ragNode: GraphNode<typeof AgentState.State> = async (state) => {
 		.slice(0, 3)
 		.map(([key]) => {
 			const item = itemOf.get(key)!
-			return `【${(item.section as string) ?? '未分节'}｜${(item.source_doc as string) ?? '?'}】${key}`
+			return `【${(item.section as string) ?? '未分节'}｜${(item.source_doc as string) ?? '?'}】${item.text}`
 		})
 	return { RAGcontents }
 }
 
-// ══ 节点：web —— 联网兜底（只接"本地路空手"的，正常问题不花这个钱）══
-const webNode: GraphNode<typeof AgentState.State> = async (state) => {
-	const webResult = await webSearchRun(state.question.trim() || state.querys[0] || '')
-	return { webResult }
+// ══ 节点：gap —— 本地空手时的缺口问答（**不再联网**）══
+// 做三件事：① 先查缺口表能否复用（同问题不重复生成）② 不能就生成一段带免责的通用参考
+//           ③ 把这一问一答写进 MySQL 待办表，等人在「缺口知识」页确认
+// 纪律：只接 knowledge 路。台账（db）不许编数字；禁配（reaction）不许编结论 —— 那两路空手就直接认怂。
+const gapNode: GraphNode<typeof AgentState.State> = async (state) => {
+	const question = state.question.trim() || state.querys[0] || ''
+	if (!question) return { gapResult: '', gapId: null, llmCalls: 0 }
+	// 近失（检索到但被地板挡掉的弱命中）作为线索一起存：人工补资料时知道"差在哪"
+	const nearMisses = state.RAGcontents.length ? state.RAGcontents.map(c => c.slice(0, 120)) : []
+	const gap = await answerGap(question, nearMisses)
+	return { gapResult: renderGapMaterial(gap), gapId: gap.id, llmCalls: 1 }
 }
 
-// ══ 节点：result —— 三来源素材 + question → 流式生成回答（链尾，答案写进 messages）══
+// ══ 节点：result —— 素材 + question → 流式生成回答（链尾，答案写进 messages）══
 const answerModel = new ChatOpenAI({
 	model: config.LLM_MODEL,
 	apiKey: config.LLM_API_KEY,
@@ -229,19 +290,29 @@ const ANSWER_PROMPT = `你是实验室试剂管理助手，依据下方"素材"�
 规则：
 1. 闪点、浓度、禁配物、急救步骤这类安全数据严禁用模型常识编造或补全，只能引自素材
 2. 溯源口径：本地文档库素材点名出处（如"据《硫酸SDS·消防措施》"）；台账数据如实报数值与位置；
-   联网素材一旦引用必须注明"（来自联网搜索，未经本地库核实）"
+   **缺口参考**要明说"本地库没有依据，以下为通用参考、未经核实"，并提示已记为待办等人工确认
 3. 素材为空或与问题相关性不足：直说"未检索到相关内容"，并建议换关键词或先在知识库页上传对应文档，不要硬答
 4. 纯寒暄（问题不涉及数据）正常自然回应即可
-5. 中文、简洁，关键安全信息用列表`
+5. 中文、简洁，关键安全信息用列表
+6. **混放/禁配类问题（reaction 路）**：相容性结论只能来自素材里的"物质相容性查询结果"。
+   · 素材说"已确认禁配/须分开储存/危险反应/仅限条件下共存"→ 照实转述，连同严重度、条件与证据原文一起给；
+   · 素材说"证据不足"→ 必须原样表达"本库没有这两个物质的已审核记录，**未命中不等于可以混合**"，
+     并建议人工核对 SDS 第 7/10 节或咨询安全负责人；**绝对不许**说"应该可以""一般没事""风险不大"这类话；
+   · 素材里没有相容性结论（这轮不是 reaction 路）→ 不许替用户下"能/不能混放"的结论，改建议查 SDS 第 10 节
+7. **素材只有"缺口参考"时**（没有本地文档素材）：可以转述它，但必须保留其中的免责声明，
+   且不许把它说成本库结论；若用户问的是安全数值，直接说"这类数据必须查 SDS 原文，本库暂无依据"`
 
 const resultNode: GraphNode<typeof AgentState.State> = async (state) => {
-	const { question, RAGcontents, dbResult, webResult, route } = state
+	const { question, RAGcontents, dbResult, compatResult, gapResult, route } = state
 
-	// 三来源拼装；db 的"没查到"不进素材（免得 LLM 对着报错文本编故事）
+	// 素材拼装；db 的"没查到"不进素材（免得 LLM 对着报错文本编故事）
 	const parts: string[] = []
 	if (RAGcontents.length) parts.push(`## 本地文档库素材（混合检索，RRF 融合排序）\n${RAGcontents.join('\n---\n').slice(0, 6000)}`)
 	if (!dbMiss(dbResult)) parts.push(`## 试剂台账查询结果（MySQL 实时数据）\n${dbResult.slice(0, 2500)}`)
-	if (webResult) parts.push(`## 联网搜索结果（⚠️未经本地库核实）\n${webResult.slice(0, 4000)}`)
+	// 相容性结论**整体进素材**（含"证据不足"那句）：它是安全结论，不许被截断到读不出立场
+	if (compatResult) parts.push(`## 物质相容性查询结果（来自人工审核的禁配规则库）\n${compatResult}`)
+	// 缺口问答：标题就把"未核实"写在脸上 —— 它跟文献素材必须一眼分得清
+	if (gapResult) parts.push(`## 本地库无依据时的通用参考（⚠️ 模型生成、未经核实，已记为待办待人工确认）\n${gapResult}`)
 	const material = parts.join('\n\n') || '(本轮无任何素材)'
 
 	try {
@@ -280,18 +351,25 @@ export const checkpointer = new MemorySaver()
 export const graph = new StateGraph(AgentState)
 	.addNode('router', routerNode)
 	.addNode('dbQuery', dbQuery)
+	.addNode('compatQuery', compatQuery)
 	.addNode('getQuerys', getQuerys)
 	.addNode('rag', ragNode)
-	.addNode('web', webNode)
+	.addNode('gap', gapNode)
 	.addNode('result', resultNode)
 	.addEdge(START, 'router')
-	// 三选一的分发 + 两处"本地空手→联网"的确定性判空（全在代码，不劳 LLM）
+	// 四选一的分发（全在代码，不劳 LLM）
 	// allowDb=false（演示通道）时 db 判定即使漏网也降级到 knowledge —— 与提示词隔离互为双保险
 	.addConditionalEdges('router', (s) =>
-		s.route === 'db' && s.allowDb !== false ? 'dbQuery' : s.route === 'chat' ? 'result' : 'getQuerys')
-	.addConditionalEdges('dbQuery', (s) => (dbMiss(s.dbResult) && s.allowWeb !== false ? 'web' : 'result'))
+		s.route === 'db' && s.allowDb !== false ? 'dbQuery'
+			: s.route === 'reaction' ? 'compatQuery'
+				: s.route === 'chat' ? 'result' : 'getQuerys')
+	// 台账空手 → 直接认怂（**不许生成数字**：库存/价格/效期编一个出来比答不出来危险得多）
+	.addEdge('dbQuery', 'result')
+	// 相容性查询：查到结论直接答（**不走缺口生成** —— 混放结论只能来自已审核规则库）
+	.addEdge('compatQuery', 'result')
 	.addEdge('getQuerys', 'rag')
-	.addConditionalEdges('rag', (s) => (s.RAGcontents.length ? 'result' : s.allowWeb !== false ? 'web' : 'result'))
-	.addEdge('web', 'result')
+	// 检索有素材 → 直接答；空手 → 缺口问答（生成 + 落 MySQL 待办），不再联网
+	.addConditionalEdges('rag', (s) => (s.RAGcontents.length ? 'result' : 'gap'))
+	.addEdge('gap', 'result')
 	.addEdge('result', END)
 	.compile({ checkpointer })

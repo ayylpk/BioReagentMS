@@ -1,0 +1,66 @@
+# Bio 生产编排（只管两个新住户 backend/tsagent）
+# ollama、qdrant、am-mysql 是机上已存在的容器——不在这里重复出生，
+# 大家同挤 agentmemory_default 公共网，互访全用容器名（mysql / ollama / qdrant）
+# 用法（服务器 /home/ubuntu/bio/src）：docker compose up -d --build
+name: bio
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    container_name: bio-backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:8080" # 家规：3000 起一后端一端口，只朝回环开门（AM=3000，Hina=3001，Bio=3002）
+    environment:
+      DB_HOST: mysql # am-mysql 在公共网上的名字
+      DB_PORT: "3306"
+      DB_NAME: BioReagentMS
+      DB_USERNAME: root
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET}
+      REDIS_HOST: bio-redis # 7 个 Service 全挂 @Cacheable，没它数据页必 500（9/8 审计）
+      REDIS_PORT: "6379"
+      TZ: Asia/Shanghai
+    networks: [agentmemory_default]
+
+  redis:
+    image: redis:7-alpine
+    container_name: bio-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379" # 只朝回环开门供宿主机排查；后端走容器名内网直连
+    # 2C4G 生存法则：给缓存设天花板 + LRU 淘汰，宁可命中率掉也不许它吃内存
+    command: ["redis-server", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru"]
+    mem_limit: 128m
+    networks: [agentmemory_default]
+
+  tsagent:
+    build:
+      context: ./tsAgent
+      dockerfile: Dockerfile
+    container_name: bio-tsagent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3003:8123" # Bio 第二个后端，顺延一格
+    env_file: .env # 三把 API key + MYSQL_PASSWORD（compose 同目录 .env，权限 600）
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_DB: BioReagentMS # ⚠️ 大写！Linux 库名分大小写，默认值 bioreagentms 会报 unknown database
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434 # 容器名直连，localhost 在这里是陷阱（9/7 实测）
+      EMBED_BACKEND: dashscope # 9/8 五哨①启用：CrewForge 要上车，释放 ~1G 驻留内存；写读同模铁律不破，同模改 v4；ollama 退役
+      PYTHON_BIN: python3 # 镜像里烤了 pytools（9/7），但 Debian 只有 python3 没有 python，spawn 得给准名字
+      # 人审端点鉴权：与 Java 后端**同一个 secret**（tsAgent 侧自校验 JWT + 查 role_permission）
+      # 缺它时人审端点返回 503（关掉但绝不敞开），所以这里必须注入
+      JWT_SECRET_KEY: ${JWT_SECRET}
+      TZ: Asia/Shanghai
+    volumes:
+      - ./tsAgent/corpus:/app/corpus # 语料落盘住宿主机：容器重建不丢货，台账路径才保得住
+      - ./tsAgent/resources:/app/resources
+    networks: [agentmemory_default]
+
+networks:
+  agentmemory_default:
+    external: true

@@ -24,7 +24,12 @@ const allMenuItems = [
   { path: '/users', title: '用户管理', icon: 'User', roles: [0] },
   { path: '/chat', title: '智能助手', icon: 'ChatDotRound', roles: [0, 1, 2, 3, 4] },
   { path: '/knowledge', title: '知识库', icon: 'Notebook', roles: [0] },
-  { path: '/web-search', title: '联网检索', icon: 'Search', roles: [0] },
+  // 人审两条线：解析层（ragReview:query/audit）+ 禁配规则（reactionReview:query/audit）
+  // 角色口径与后端 SQL 一致：query=1/2/4，audit=1/4，管理员 0 全通；这里按"能进页面"（query 档）给
+  { path: '/review-parse', title: '解析人审', icon: 'DocumentChecked', roles: [0, 1, 2, 4] },
+  { path: '/review-reaction', title: '禁配审核', icon: 'Connection', roles: [0, 1, 4] },
+  // 缺口知识：AI 生成 + 人工确认（gapKnowledge:query=1/2/4，audit=1/4）
+  { path: '/gap-knowledge', title: '缺口知识', icon: 'MagicStick', roles: [0, 1, 2, 4] },
 ];
 
 const menuItems = computed(() =>

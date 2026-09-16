@@ -2,21 +2,26 @@
 // 知识库管理 —— 语料的人工进料口（只有上传/拖拽，不做爬虫入口；爬虫将来直连 /ingest API）
 // 交互模型：文件逐个 POST /ingest/upload → 服务端串行队列解析 → 本页轮询台账(ingest_log)看状态翻转
 // 后端是 Hono :8123（vite proxy /ingest），不走 Java 的 {code,msg} 包装，所以用裸 axios 而非 @/utils/request
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 
-// ---------- 白名单（与 tsAgent routes/ingest.ts 的 ALLOW_EXT 同步改） ----------
-const ALLOW_EXT = ['pdf', 'docx', 'xlsx', 'txt', 'md', 'csv']
-const ACCEPT_HINT = `支持 ${ALLOW_EXT.join(' / ')}，单文件 ≤50MB；可拖文件或整个文件夹（自动递归取文档）`
+// ---------- 格式白名单：**从后端取**（口径唯一源 tsAgent/src/rag/parse/formats.ts） ----------
+// 9/16 起不再硬编码：解析泛化扩到 html/odt/pptx/webp/json… 后，前端那 6 种白名单会把用户传的
+// 新格式**先拦在页面里**，根本到不了后端的前门准入。这份兜底只在后端没起/取不到时用。
+const FALLBACK_ALLOW_EXT = ['pdf', 'docx', 'xlsx', 'pptx', 'html', 'odt', 'rtf', 'txt', 'md', 'csv', 'json', 'png', 'jpg']
+const allowExt = ref([...FALLBACK_ALLOW_EXT])
+const acceptHint = computed(() => `支持 ${allowExt.value.join(' / ')} 等，单文件 ≤50MB；可拖文件或整个文件夹（自动递归取文档）`)
 const extOf = (name) => (name.split('.').pop() || '').toLowerCase()
 
-// ---------- 状态字典（台账五态：queued 是 API 预写，其余四个由 pipeline 落账） ----------
+// ---------- 状态字典（台账状态：queued 是 API 预写，其余由 pipeline / 人审落账） ----------
+// review/quarantined 的文档到「解析人审」页处置（确认入库或驳回）；rejected 是人审驳回的结果
 const STATUS = {
   queued: { label: '排队中', tag: 'info' },
   done: { label: '已入库', tag: 'success' },
   review: { label: '待人审', tag: 'warning' },
   quarantined: { label: '隔离', tag: 'primary' },
+  rejected: { label: '已驳回', tag: 'info' },
   failed: { label: '失败', tag: 'danger' },
 }
 const fmtCost = (ms) => (ms == null ? '—' : ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`)
@@ -59,11 +64,11 @@ async function handleFiles(rawFiles) {
   let skipped = 0
   const kept = []
   for (const f of rawFiles) {
-    if (ALLOW_EXT.includes(extOf(f.name))) kept.push(f)
+    if (allowExt.value.includes(extOf(f.name))) kept.push(f)
     else skipped++
   }
   if (!kept.length) {
-    ElMessage.warning(`没有符合白名单的文件（${ALLOW_EXT.join('/')}）${skipped ? `，跳过 ${skipped} 个` : ''}`)
+    ElMessage.warning(`没有符合白名单的文件（${allowExt.value.join('/')}）${skipped ? `，跳过 ${skipped} 个` : ''}`)
     return
   }
   if (skipped) ElMessage.info(`跳过 ${skipped} 个不支持的文件，上传剩余 ${kept.length} 个`)
@@ -110,6 +115,17 @@ async function onDrop(e) {
 }
 
 // ---------- 台账列表 ----------
+/** 拉后端的格式白名单（取不到就留兜底：页面不会因为后端没起而不可用） */
+async function loadFormats() {
+  try {
+    const res = await axios.get('/ingest/formats')
+    const allowed = res.data?.allowed
+    if (Array.isArray(allowed) && allowed.length) allowExt.value = allowed
+  } catch {
+    // 静默：兜底白名单已经在用，connWarned 那条提醒由台账轮询负责
+  }
+}
+
 const loading = ref(false)
 const list = ref([])
 const total = ref(0)
@@ -196,7 +212,10 @@ function openDetail(row) {
   drawerVisible.value = true
 }
 
-onMounted(() => loadList())
+onMounted(() => {
+  loadList()
+  loadFormats()
+})
 onUnmounted(() => clearTimeout(pollTimer))
 </script>
 
@@ -223,7 +242,7 @@ onUnmounted(() => clearTimeout(pollTimer))
           <el-button type="primary" @click="fileInput?.click()">选择文件</el-button>
           <el-button @click="dirInput?.click()">选择文件夹</el-button>
         </div>
-        <p class="drop-hint">{{ ACCEPT_HINT }}</p>
+        <p class="drop-hint">{{ acceptHint }}</p>
       </template>
       <template v-else>
         <p class="drop-title">上传中 {{ progress.done }} / {{ progress.total }}</p>
@@ -233,7 +252,7 @@ onUnmounted(() => clearTimeout(pollTimer))
         />
       </template>
     </div>
-    <input ref="fileInput" type="file" multiple hidden :accept="ALLOW_EXT.map((e) => '.' + e).join(',')" @change="onPickFiles" />
+    <input ref="fileInput" type="file" multiple hidden :accept="allowExt.map((e) => '.' + e).join(',')" @change="onPickFiles" />
     <input ref="dirInput" type="file" webkitdirectory multiple hidden @change="onPickDir" />
 
     <!-- 筛选行：状态 tabs + 关键字 -->

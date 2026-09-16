@@ -3,10 +3,10 @@
 // 协议（自己两端，够用就行）：
 //   入 POST body { input: { question }, config: { configurable: { thread_id } }, mode?: 'public' }
 //   出 SSE data 行：{"type":"ai_chunk","text":"…"} 增量 → {"type":"done"} / {"type":"error","message":"…"}
-// mode=public（免登录演示通道 /assistant）三件套：
-//   ① allowDb=false —— 台账路关闭（提示词二选一 + 条件边双保险，库存数据不给匿名者）
+// mode=public（免登录演示通道 /assistant）两件套：
+//   ① allowDb=false —— 台账路关闭（提示词隔离 + 条件边双保险，库存数据不给匿名者）
 //   ② per-IP 限流 —— 8 条/分钟 + 200 条/天（内存计数器，进程重启即重置，demo 够用）
-//   ③ allowWeb —— 联网兜底走全局日预算（100 次/天，防 Tavily 被刷爆），预算尽则该路降级为直接认怂
+// 注：联网兜底与它的"全局日预算"已随联网搜索一起移除（本地空手改为缺口问答进 MySQL 待办）
 // 会话记忆：图里 MemorySaver 按 thread_id 分线程（进程内存档，服务重启 = 全员清空，符合"临时会话"定位）
 import { Hono, type Context } from 'hono'
 import { AIMessageChunk } from '@langchain/core/messages'
@@ -17,35 +17,26 @@ export const streamRoutes = new Hono()
 // ── 限流器（固定窗口，进程内存版；升级路径=换 Redis，键语义不变） ──
 const MIN_WINDOW = 8
 const DAY_WINDOW = 200
-const WEB_DAILY_BUDGET = 100
 const buckets = new Map<string, { minStart: number; minCount: number; day: string; dayCount: number }>()
-let webBudgetDay = ''
-let webBudgetLeft = WEB_DAILY_BUDGET
 
-function takeQuota(ip: string): { ok: boolean; msg?: string; allowWeb: boolean } {
+function takeQuota(ip: string): { ok: boolean; msg?: string } {
 	const now = Date.now()
 	const day = new Date(now).toISOString().slice(0, 10)
-	if (day !== webBudgetDay) {
-		webBudgetDay = day
-		webBudgetLeft = WEB_DAILY_BUDGET
-	}
 	const b = buckets.get(ip) ?? { minStart: now, minCount: 0, day, dayCount: 0 }
 	if (b.day !== day) Object.assign(b, { day, dayCount: 0 })
 	if (now - b.minStart > 60_000) Object.assign(b, { minStart: now, minCount: 0 })
 	if (b.minCount >= MIN_WINDOW) {
 		buckets.set(ip, b)
-		return { ok: false, msg: '演示通道每分钟最多 8 条，歇一会儿再问～', allowWeb: webBudgetLeft > 0 }
+		return { ok: false, msg: '演示通道每分钟最多 8 条，歇一会儿再问～' }
 	}
 	if (b.dayCount >= DAY_WINDOW) {
 		buckets.set(ip, b)
-		return { ok: false, msg: '今日演示额度已用完，明天再来或登录完整版', allowWeb: webBudgetLeft > 0 }
+		return { ok: false, msg: '今日演示额度已用完，明天再来或登录完整版' }
 	}
 	b.minCount++
 	b.dayCount++
 	buckets.set(ip, b)
-	const allowWeb = webBudgetLeft > 0
-	if (allowWeb) webBudgetLeft-- // 每条公开消息预扣一份联网预算（是否真走到 web 节点由图决定，宁可保守）
-	return { ok: true, allowWeb }
+	return { ok: true }
 }
 
 /** 本地 vite proxy / 线上 nginx：优先 x-forwarded-for 首段；都拿不到归 'local' */
@@ -67,7 +58,6 @@ streamRoutes.post('/runs/stream', async (c) => {
 	if (question.length > 500) return c.json({ error: '问题过长（≤500 字）' }, 400)
 
 	// 公开通道先过闸门，超限时连图都不进（一次 LLM 都不起）
-	let allowWeb = true
 	if (isPublic) {
 		const quota = takeQuota(clientIp(c))
 		if (!quota.ok) {
@@ -76,7 +66,6 @@ streamRoutes.post('/runs/stream', async (c) => {
 				{ headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' } },
 			)
 		}
-		allowWeb = quota.allowWeb
 	}
 
 	const enc = new TextEncoder()
@@ -87,7 +76,7 @@ streamRoutes.post('/runs/stream', async (c) => {
 			let gotChunk = false
 			try {
 				const it = await graph.stream(
-					{ question, ...(isPublic ? { allowDb: false, allowWeb } : {}) },
+					{ question, ...(isPublic ? { allowDb: false } : {}) },
 					{ configurable: { thread_id: threadId }, streamMode: 'messages' },
 				)
 				for await (const [msg, meta] of it as unknown as AsyncIterable<[any, any]>) {

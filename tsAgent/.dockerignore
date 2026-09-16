@@ -1,0 +1,8 @@
+# 构建卫生：这三样进了镜像就是事故
+node_modules/        # 本机是 Windows 原生二进制，会盖掉镜像里 bun install 的 linux 版（jieba 直接炸）
+.env                 # 明文密钥不烤镜像层——线上用 compose 的 env_file 注入
+corpus/              # 语料落盘（1740 个爬来的 md，走卷挂载，不是代码）
+data/                # 爬虫案底与位点
+resources/           # 解析资产落盘
+__pycache__/
+*.log

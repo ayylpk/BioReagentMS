@@ -54,3 +54,10 @@ out/
 
 # 上传摄取的语料落盘目录（知识库页/重摄共用，不进仓库）
 tsAgent/corpus/
+
+# ICSC 爬虫案底与位点（机器产物不入库）
+tsAgent/data/
+
+# 工位记忆/交接记录（.workbuddy）：记的是环境细节与排障过程，**已实测含明文数据库口令**，
+# 一律不入库；要看交接记录就翻本机 .workbuddy/memory/。登记在此防 git add . 误收。
+.workbuddy/

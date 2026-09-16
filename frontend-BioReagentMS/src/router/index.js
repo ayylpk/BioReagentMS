@@ -107,10 +107,23 @@ const router = createRouter({
           meta: { title: '知识库', icon: 'Notebook' },
         },
         {
-          path: 'web-search',
-          name: 'WebSearch',
-          component: () => import('@/views/WebSearch.vue'),
-          meta: { title: '联网检索', icon: 'Search' },
+          path: 'review-parse',
+          name: 'ReviewParse',
+          component: () => import('@/views/ReviewParse.vue'),
+          meta: { title: '解析人审', icon: 'DocumentChecked' },
+        },
+        {
+          path: 'review-reaction',
+          name: 'ReviewReaction',
+          component: () => import('@/views/ReviewReaction.vue'),
+          meta: { title: '禁配审核', icon: 'Connection' },
+        },
+        {
+          // 缺口知识：本地库没查到的问题由 AI 生成参考 → 进 MySQL → 这里人工确认（联网检索已移除）
+          path: 'gap-knowledge',
+          name: 'GapKnowledge',
+          component: () => import('@/views/GapKnowledge.vue'),
+          meta: { title: '缺口知识', icon: 'MagicStick' },
         },
       ],
     },

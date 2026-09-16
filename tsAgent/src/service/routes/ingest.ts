@@ -1,22 +1,30 @@
 // 上传摄取 API：知识库页的进食口（页面只给人工上传/拖拽入口，爬虫不进 UI）
 // 契约：upload 立即返回 202+docId，真正解析进进程内串行队列（pipeline 注释定死"并发留给真上量时"）；
 //       结果以 ingest_log 台账为唯一真相（进程重启不丢账，重摄幂等覆盖），前端轮询 /list 看状态翻转
+//
+// 9/16 准入口径改动（解析泛化第一刀）：改前是"后缀 ∈ 6 种白名单"，其余一律门口拒。
+//   问题不在"拒"，在"**只能靠后缀判断**"——一个陌生后缀但内容是纯文本的货号说明、一份 .html 的
+//   厂家 SDS、一张 .webp 的截图，全都在门口被拒，而它们其实都能解析。
+//   现在：① 垃圾/转存档仍然门口拒（理由照旧）；② 其余**先落盘再问前门 probe**，
+//         前门判 L2-review（加密/损坏/二进制不可解）→ 删文件 + 明确理由拒；
+//         判得出来（含陌生后缀的内容嗅探兜底）→ 收下进队列。**后缀不再是准入门槛，内容才是。**
 import { join, basename } from 'node:path'
 import { existsSync, mkdirSync } from 'node:fs'
 import { writeFile, rm } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
 import { pool } from '../../db/mysql'
 import { ingestFile } from '../../rag/pipeline'
 import { deleteDoc } from '../../rag/store/upsert'
+import { ALLOWED_EXT, CONVERT_REQUIRED_EXT, JUNK_EXT, convertRequiredReason, extOf, isJunkExt, unsupportedReason } from '../../rag/parse/formats'
+import { probe } from '../../rag/inspect/probe'
+import { CORPUS, docIdOf } from '../../rag/inspect/identity'
 
-const ROOT = fileURLToPath(new URL('../../../', import.meta.url)) // tsAgent/（本文件在 src/service/routes，爬三层；9/6 冒烟炸出"少爬一层"同款坑）
-export const CORPUS = join(ROOT, 'corpus') // webSearch 确认件也落这（routes/webSearch.ts 共用）
+export { CORPUS } // webSearch 确认件也落这（routes/webSearch.ts 共用；口径归 identity.ts，勿再各写一份）
 mkdirSync(CORPUS, { recursive: true })
-
-// 白名单与 probe 实况对齐（code-over-slip：html/pptx 探测层还没接，别放进门）
-const ALLOW_EXT = new Set(['pdf', 'docx', 'xlsx', 'txt', 'md', 'csv'])
 const MAX_SIZE = 50 * 1024 * 1024 // 单文件 50MB 顶（SDS 文档几百 KB 到几 MB，留足扫描余量）
+// corpus 子目录白名单（9/6 拍板：化学/生物分开各住各的）：上传带 form 字段 sub=chemistry|bio，
+// 不在名单/没带的落 misc（前端知识库页暂未传 sub）。台账 file 列存 dest 绝对路径，reingest/删除零改动
+const SUBS = new Set(['chemistry', 'bio'])
 
 /** 落盘名清洗：去路径、干掉文件系统非法字符；同名覆盖 = "重新上传即更新"语义（doc_id 相同，摄取幂等重建） */
 function safeName(raw: string): string {
@@ -26,7 +34,6 @@ function safeName(raw: string): string {
 		.slice(0, 100)
 	return name || 'unnamed'
 }
-const docIdOf = (file: string) => file.replace(/\.[^.]+$/, '')
 
 // ---------- 进程内串行队列 ----------
 const queue: string[] = []
@@ -67,28 +74,73 @@ ingestRoutes.post('/upload', async (c) => {
 	const files = [...(form.values() as unknown as Iterable<unknown>)].filter((v): v is File => v instanceof File)
 	if (!files.length) return c.json({ error: '未收到文件（multipart File 字段）' }, 400)
 
-	const accepted: { docId: string; file: string }[] = []
+	const accepted: { docId: string; file: string; family?: string; notes?: string[] }[] = []
 	const rejected: { name: string; reason: string }[] = []
 	for (const f of files) {
 		const name = safeName(f.name)
-		const ext = name.split('.').pop()?.toLowerCase() ?? ''
-		if (!ALLOW_EXT.has(ext)) {
-			rejected.push({ name: f.name, reason: `不支持的格式 .${ext}（白名单: ${[...ALLOW_EXT].join('/')}）` })
+		const ext = extOf(name)
+		// ① 门口速拒：垃圾后缀与"认识但吃不下"的转存档（零成本，连盘都不用落）
+		if (isJunkExt(ext)) {
+			rejected.push({ name: f.name, reason: `临时/备份件（.${ext}）不该进知识库` })
+			continue
+		}
+		const conv = convertRequiredReason(ext)
+		if (conv) {
+			rejected.push({ name: f.name, reason: conv })
 			continue
 		}
 		if (f.size > MAX_SIZE) {
 			rejected.push({ name: f.name, reason: `超过 50MB 上限（${(f.size / 1048576).toFixed(1)}MB）` })
 			continue
 		}
-		const dest = join(CORPUS, name)
+		const sub = SUBS.has(String(form.get('sub') ?? '')) ? String(form.get('sub')) : 'misc' // 爬虫传 bio/chemistry；未传的（前端手传）落 misc
+		const dir = join(CORPUS, sub)
+		mkdirSync(dir, { recursive: true })
+		const dest = join(dir, name)
 		await writeFile(dest, Buffer.from(await f.arrayBuffer()))
-		await markQueued(docIdOf(name), dest)
+
+		// ② 内容准入：落盘后问前门 —— 后缀只是"声明"，内容才是判据
+		let profile
+		try {
+			profile = await probe(dest)
+		} catch (e) {
+			await rm(dest, { force: true })
+			rejected.push({ name: f.name, reason: `前门探测失败：${(e as Error).message.slice(0, 100)}` })
+			continue
+		}
+		if (profile.strategy === 'L2-review') {
+			// 收下来只会变成一条"review"台账行且无人处置（review 队列仍是空壳）→ 门口就说清楚，别造幻觉
+			await rm(dest, { force: true })
+			rejected.push({ name: f.name, reason: `${unsupportedReason(ext)} —— 前门判定：${profile.reason}` })
+			continue
+		}
+
+		const docId = docIdOf(dest) // 口径唯一来源 identity.ts（相对 corpus 根的路径折 "__"）
+		await markQueued(docId, dest)
 		queue.push(dest)
-		accepted.push({ docId: docIdOf(name), file: name }) // doc_id 口径 = 纯文件名去后缀（pipeline baseName 同款）
+		accepted.push({ docId, file: name, family: profile.family, ...(profile.notes?.length ? { notes: profile.notes } : {}) })
 	}
 	void pump()
 	return c.json({ accepted, rejected }, 202)
 })
+
+// 格式口径：前端知识库页**从这里取**白名单，不许再自己抄一份
+// 起因：Knowledge.vue 里硬编码了 `['pdf','docx','xlsx','txt','md','csv']` 并注释"与 routes/ingest.ts 同步改"——
+//   解析泛化扩族后前端没跟上，用户在页面上传 .html/.odt/.webp/.json 会被**前端先拦掉**，
+//   根本到不了后端的前门准入（"四处口径"变成五处）。口径本体在 src/rag/parse/formats.ts，这里只做投影。
+ingestRoutes.get('/formats', (c) =>
+	c.json({
+		allowed: [...ALLOWED_EXT].sort(),
+		/** 认识但吃不下 → 前端可以直接把理由显示给用户（与 unsupportedReason 同源） */
+		convertRequired: [...CONVERT_REQUIRED_EXT.entries()].map(([ext, reason]) => ({ ext, reason })),
+		junk: [...JUNK_EXT].sort(),
+		maxSizeMb: MAX_SIZE / 1048576,
+		notes: [
+			'白名单只挡"不该扫的噪音"，内容才是准入门槛：陌生后缀但内容是文本 → 后端按文本族收',
+			'转存档（老 doc/xls、压缩包、iWork、heic…）在门口明确拒绝并给转存理由',
+		],
+	}),
+)
 
 // 台账列表：分页 + 状态/关键字过滤（前端 3s 轮询的就是它，SQL 保持轻）
 ingestRoutes.get('/list', async (c) => {
