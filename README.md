@@ -1,82 +1,47 @@
 # ChemReagentMS - 化学试剂库存管理系统
 
-面向化学实验室的试剂库存管理系统，支持试剂主数据管理、批次出入库、效期预警、多级审批流程。
+面向化学实验室的试剂库存管理系统：试剂主数据、批次出入库（FEFO）、效期预警、多级审批，内置 AI 助手（台账查询 / 知识库检索 / 禁配规则 / 缺口知识闭环）。
 
-## 功能模块
+## 功能
 
-| 模块 | 说明 |
-|------|------|
-| 试剂管理 | 试剂主数据维护（名称/CAS号/规格/纯度/分类/存储条件） |
-| 批次库存 | 批次入库、FEFO出库（先到期先出）、库存扣减、状态跟踪 |
-| 入库管理 | 入库单创建、自动生成批次号 |
-| 出库审批 | 出库申请 → 审批（通过/拒绝）→ 自动扣库存 |
-| 效期预警 | 定时扫描即将过期批次、库存低于安全阈值的试剂，自动生成预警 |
-| 供应商管理 | 供应商信息维护 |
-| 用户管理 | 多角色权限控制（系统管理员/仓库管理员/实验员/采购员/PI） |
-| 操作日志 | 自动记录增删改操作，可追溯 |
-| 报表导出 | 库存报表、入库报表 Excel 导出 |
-| 智能助手 | AI 对话（流式）：意图路由四路——台账结构化查询 / 知识库混合检索 / **禁配相容性规则查询** / 闲聊 |
-| 缺口知识 | 本地库没查到的问题：AI 生成带免责的通用参考 → 落 MySQL → 分页界面人工确认（**不再联网**） |
-| 联网检索 | ~~Tavily 搜索 → 暂存 MySQL → 一键确认入 Qdrant~~ **已移除**：改为「缺口知识」（AI 生成 → MySQL 待办 → 人工确认） |
-| 知识库管理 | 上传/拖文件夹摄取 SDS·规章·SOP 长文档（解析九模块+人审漏斗），台账可观测可重摄 |
-| 人审闭环 | 解析层人审（坏件改完确认入库/驳回）+ 禁配规则人审（候选裁决→发布→来源复核），均走 JWT + RBAC 权限码 |
+- **库存主线**：试剂管理、批次入库、FEFO 出库、出库审批流、效期与安全库存预警（定时扫描）
+- **知识库**：SDS·规章·SOP 长文档摄取（解析 + 人审漏斗），Qdrant 混合检索（dense + BM25，RRF 融合）
+- **AI 助手**：意图路由四路 —— 台账结构化查询 / 知识库混合检索 / 禁配相容性规则 / 闲聊，SSE 真流式
+- **缺口知识**：本地没答案的问题 → AI 生成带免责的通用参考 → 落 MySQL → 人工确认入库
+- **管理**：多角色 RBAC（管理员/仓库管理员/实验员/采购员/PI）、操作日志、Excel 报表导出
 
 ## 技术栈
 
-| 层级 | 技术 |
-|------|------|
-| 后端框架 | Spring Boot 3.x |
-| 安全认证 | JWT (jjwt 0.12.x) + 拦截器 + AOP 权限校验 |
-| ORM | MyBatis + PageHelper |
-| 数据库 | MySQL 8.0 + Druid 连接池 |
-| 缓存 | Redis（Spring Cache 注解） |
-| 定时任务 | Spring Scheduled（预警扫描） |
-| 前端框架 | Vue 3 + Vite |
-| UI 组件 | Element Plus |
-| 状态管理 | Pinia |
-| HTTP 客户端 | Axios |
-| AI Agent | LangGraph.js（Bun）+ DeepSeek，三工具意图路由，SSE 真流式 |
-| Agent 周边服务 | Hono :8123（/ingest 摄取 + /review 解析人审 + /reaction 禁配审核 + /gap 缺口知识 + /agent 流式） |
-| 向量数据库 | Qdrant（named dense + BM25 稀疏双向量，RRF 融合）+ Ollama bge-m3 |
-| 文档解析 | py 三件套（pymupdf4llm/markitdown/openpyxl）+ qwen-vl  OCR 桥；html/pptx/odf/rtf/csv 有标准库兜底（不装第三方库也能抽），陌生后缀走内容嗅探，降级事实走 diag 契约进台账 |
+| 层 | 技术 |
+|----|------|
+| 后端 | Spring Boot 3.x · MyBatis + PageHelper · MySQL 8 + Druid · Redis · JWT |
+| 前端 | Vue 3 + Vite · Element Plus · Pinia · Axios |
+| AI | LangGraph.js（Bun）+ DeepSeek · Hono :8123 · Qdrant 双向量 RRF · Ollama bge-m3 · pymupdf4llm / markitdown / openpyxl + qwen-vl OCR |
 
 ## 项目结构
 
 ```
-BioReagentMS/
-├── backend-BioReagentMS/          # 后端 Maven 多模块
-│   ├── common/                    # 公共模块（工具类、JWT、异常定义）
-│   ├── pojo/                      # 实体/DTO/VO/查询参数
-│   └── server/                    # 主服务（Controller/Service/Mapper）
-├── frontend-BioReagentMS/         # 前端 Vue 3 项目
-│   └── src/
-│       ├── layout/                # 布局组件
-│       ├── router/                # 路由配置
-│       ├── stores/                # Pinia 状态管理
-│       ├── utils/                 # Axios 封装
-│       └── views/                 # 页面组件（Chat/Knowledge/ReviewParse/ReviewReaction/GapKnowledge）
-├── tsAgent/                       # AI Agent（LangGraph.js）+ Hono 周边服务 :8123
-│   ├── src/agent/                 # 主图：router→{db|knowledge|chat}→(rag/dbQuery/web)→result
-│   ├── src/rag/                   # 解析九模块 + 生产读侧 hybridSearch（Qdrant 双向量 RRF）
-│   ├── src/tools/                 # 工具：query_reagent_db(模板白名单)/search_knowledge/reactionCompat/gapAnswer
-│   ├── src/service/               # Hono：/ingest /review /reaction /gap /agent/runs/stream
-│   ├── src/pytools/               # L0-py 解析栈（spawn 子进程，末行 JSON 契约）
-│   └── corpus/                    # 上传语料落盘（gitignore）
-├── env.example                    # 环境变量模板（复制为 .env 使用）
-└── .gitignore
+ChemReagentMS/
+├── backend-ChemReagentMS/     # 后端 Maven 多模块（common / pojo / server）
+├── frontend-ChemReagentMS/    # 前端 Vue 3（layout / router / stores / utils / views）
+├── tsAgent/                   # AI Agent（LangGraph.js）+ Hono 周边服务 :8123
+│   ├── src/agent/  src/rag/  src/tools/  src/service/  src/pytools/
+│   └── corpus/                # 上传语料落盘（gitignore）
+├── deploy/                    # Dockerfile / SQL
+└── env.example                # 环境变量模板（复制为 .env 使用）
 ```
 
 ## 服务端口
 
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| 后端 API | 8080 | Spring Boot |
-| 前端 | 5173 | Vite 开发服务器 |
-| Agent 周边服务 | 8123 | Hono（摄取/确认/流式聊天端点，agent 侧唯一常驻进程） |
-| Qdrant | 6333 | 向量库（Docker，卷 qdrant-data） |
-| Ollama | 11434 | 本地 bge-m3 embedding |
+| 服务 | 端口 |
+|------|------|
+| 后端 API（Spring Boot） | 8080 |
+| 前端（Vite dev） | 5173 |
+| Hono Agent 服务 | 8123 |
+| Qdrant（Docker，卷 qdrant-data） | 6333 |
+| Ollama bge-m3 | 11434 |
 
-前端代理：`/api` → `localhost:8080`，`/ingest`+`/agent`+`/review`+`/reaction`+`/gap` → `localhost:8123`
+前端代理：`/api` → 8080；`/ingest` `/agent` `/review` `/reaction` `/gap` → 8123
 
 ## License
 
