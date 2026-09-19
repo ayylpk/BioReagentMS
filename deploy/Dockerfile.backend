@@ -4,11 +4,11 @@ FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /src
 # 腾讯云服务器直连 Maven Central 太慢且常断，构建走阿里云镜像（与本机 npmmirror 同思路）
 COPY deploy/maven-settings.xml /root/.m2/settings.xml
-COPY backend-BioReagentMS/ ./backend-BioReagentMS/
-RUN mvn -q -B -f backend-BioReagentMS/pom.xml -DskipTests package
+COPY backend-ChemReagentMS/ ./backend-ChemReagentMS/
+RUN mvn -q -B -f backend-ChemReagentMS/pom.xml -DskipTests package
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY --from=build /src/backend-BioReagentMS/server/target/server-1.0-SNAPSHOT.jar app.jar
+COPY --from=build /src/backend-ChemReagentMS/server/target/server-1.0-SNAPSHOT.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
