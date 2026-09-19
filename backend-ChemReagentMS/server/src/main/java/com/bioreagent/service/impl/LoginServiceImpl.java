@@ -1,0 +1,55 @@
+package com.bioreagent.service.impl;
+
+
+import com.bioreagent.constant.JwtClaimsConstant;
+import com.bioreagent.constant.MessageConstant;
+import com.bioreagent.entity.User;
+import com.bioreagent.mapper.UserMapper;
+import com.bioreagent.properties.JwtProperties;
+import com.bioreagent.result.Result;
+import com.bioreagent.service.LoginService;
+import com.bioreagent.utils.JwtUtil;
+import com.bioreagent.utils.PasswordUtil;
+import com.bioreagent.vo.LoginVO;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@Service
+public class LoginServiceImpl implements LoginService {
+
+    @Autowired
+    private UserMapper userMapper;
+
+    @Autowired
+    private JwtProperties jwtProperties;
+
+    @Override
+    public Result<LoginVO> login(String username, String password) {
+        User user = userMapper.getByUsername(username);
+
+        if(user == null){
+            return Result.error(MessageConstant.USER_NOT_FOUND);
+        }
+
+        // 散列比对（内部兼容历史明文，见 PasswordUtil.matches）。
+        // 旧写法是明文等值比较：库里存的就是明文，一次拖库/备份泄露即全站口令失效。
+        if (!PasswordUtil.matches(password, user.getPassword())) {
+            return Result.error(MessageConstant.USERNAME_OR_PASSWORD_ERROR);
+        }
+
+        LoginVO loginVO = new LoginVO();
+        Map<String, Object> claims = new HashMap<>();
+        claims.put(JwtClaimsConstant.USER_ID, user.getId());
+        claims.put(JwtClaimsConstant.ROLE, user.getRole());
+        String token = JwtUtil.createJWT(jwtProperties.getSecretKey(), jwtProperties.getTtl(), claims);
+        loginVO.setAccessToken(token);
+        loginVO.setUserId(user.getId());
+        loginVO.setRole(user.getRole());
+        loginVO.setUsername(user.getUsername());
+
+        return Result.success(loginVO);
+    }
+}
