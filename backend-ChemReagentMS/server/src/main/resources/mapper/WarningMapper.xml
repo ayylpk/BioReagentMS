@@ -102,7 +102,7 @@
             resolved_by
         FROM warning_record
         WHERE reagent_id   = #{reagentId}
-          AND reagent_batch <=> #{reagentBatch}
+          AND reagent_batch <![CDATA[<=>]]> #{reagentBatch}
           AND warning_type = #{warningType}
           AND status       = #{status}
         LIMIT 1
